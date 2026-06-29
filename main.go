@@ -54,6 +54,7 @@ type result struct {
 	Status   string        `json:"status"`
 	Scope    string        `json:"scope"`
 	Summary  string        `json:"summary"`
+	Level    string        `json:"level"`
 	Header   string        `json:"header"`
 	Checks   []checkItem   `json:"checks"`
 	Fixed    []fixedItem   `json:"fixed"`
@@ -73,6 +74,7 @@ type options struct {
 	Scope   string
 	Paths   []string
 	JSONOut bool
+	Level   string
 }
 
 type stdinPayload struct {
@@ -99,7 +101,7 @@ type cliError string
 func (e cliError) Error() string { return string(e) }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|gate|flavors|doctor|version> [scope] [--json]
+	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|flavors|doctor|version> [scope] [--easy|--hard] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -108,7 +110,7 @@ Scopes:
   --stdin-json         read {"paths":[...]} from stdin
 
 Examples:
-  taste gate --changed
+  taste check --hard --changed
   taste fix --paths main.go scripts/dev.sh --json
   taste flavors
   taste version`)
@@ -182,7 +184,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste <check|fix|format|gate|flavors|doctor|version> [scope] [--json]
+	fmt.Fprintln(w, `usage: taste <check|fix|format|flavors|doctor|version> [scope] [--easy|--hard] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -191,7 +193,7 @@ Scopes:
   --stdin-json         read {"paths":[...]} from stdin
 
 Examples:
-  taste gate --changed
+  taste check --hard --changed
   taste fix --paths main.go scripts/dev.sh --json
   taste flavors
   taste version`)
@@ -202,7 +204,11 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 	if intent != "check" && intent != "fix" && intent != "format" && intent != "gate" {
 		return options{}, cliError("unknown command: " + intent)
 	}
-	opts := options{Intent: intent}
+	opts := options{Intent: intent, Level: "easy"}
+	if intent == "gate" {
+		opts.Intent = "check"
+		opts.Level = "hard"
+	}
 	collectPaths := false
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
@@ -220,6 +226,10 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 		switch arg {
 		case "--json":
 			opts.JSONOut = true
+		case "--easy", "--quick":
+			opts.Level = "easy"
+		case "--hard", "--strict":
+			opts.Level = "hard"
 		case "--changed":
 			opts.Scope = "changed"
 		case "--project":
@@ -424,7 +434,10 @@ func toolDefByName(name string) toolDef {
 	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
 }
 func runTaste(opts options) result {
-	res := result{Scope: opts.Scope, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
+	res := result{Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
+	if res.Level == "" {
+		res.Level = "easy"
+	}
 	if res.Scope == "" {
 		if inGitRepo() {
 			res.Scope = "changed"
@@ -447,13 +460,13 @@ func runTaste(opts options) result {
 	diag := opts.Intent == "check" || opts.Intent == "fix" || opts.Intent == "gate"
 
 	if len(groups.Go) > 0 {
-		runGo(&res, groups.Go, format, diag)
+		runGo(&res, groups.Go, format, diag, res.Level)
 	}
 	if len(groups.JS) > 0 {
-		runJS(&res, format, diag)
+		runJS(&res, format, diag, res.Level)
 	}
 	if len(groups.Bash) > 0 {
-		runBash(&res, groups.Bash, format, diag)
+		runBash(&res, groups.Bash, format, diag, res.Level)
 	}
 	if len(paths) == 0 || (len(groups.Go) == 0 && len(groups.JS) == 0 && len(groups.Bash) == 0) {
 		res.Warnings = append(res.Warnings, warningItem{Message: "no supported source files matched scope"})
@@ -630,7 +643,7 @@ func isBashFile(p string) bool {
 	return ext == ".sh" || ext == ".bash" || ext == ".zsh"
 }
 
-func runGo(res *result, files []string, format, diag bool) {
+func runGo(res *result, files []string, format, diag bool, level string) {
 	if format {
 		if _, ok := resolveTool(toolDefByName("gofmt")); !ok {
 			res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: "gofmt not found; override with TASTE_GOFMT"})
@@ -659,7 +672,7 @@ func runGo(res *result, files []string, format, diag bool) {
 			res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gofmt", Message: summary})
 		}
 	}
-	if fileExists("go.mod") {
+	if level == "hard" && fileExists("go.mod") {
 		for _, spec := range []struct {
 			name string
 			args []string
@@ -673,7 +686,7 @@ func runGo(res *result, files []string, format, diag bool) {
 	}
 }
 
-func runJS(res *result, format, diag bool) {
+func runJS(res *result, format, diag bool, level string) {
 	scripts := packageScripts()
 	if len(scripts) == 0 {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "package.json scripts not found"})
@@ -688,7 +701,9 @@ func runJS(res *result, format, diag bool) {
 	}
 	if diag {
 		runNPMScript(res, scripts, "lint", true)
-		runNPMScript(res, scripts, "test", true)
+		if level == "hard" {
+			runNPMScript(res, scripts, "test", true)
+		}
 	}
 }
 
@@ -722,7 +737,7 @@ func packageScripts() map[string]bool {
 	return out
 }
 
-func runBash(res *result, files []string, format, diag bool) {
+func runBash(res *result, files []string, format, diag bool, level string) {
 	if format {
 		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "bash formatting not configured"})
 	}
@@ -735,6 +750,9 @@ func runBash(res *result, files []string, format, diag bool) {
 		if status == "fail" {
 			res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", File: f, Code: "bash -n", Message: summary})
 		}
+	}
+	if level != "hard" {
+		return
 	}
 	if _, ok := resolveTool(toolDefByName("shellcheck")); !ok {
 		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "shellcheck not found; override with TASTE_SHELLCHECK"})

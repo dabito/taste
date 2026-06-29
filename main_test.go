@@ -30,7 +30,7 @@ func TestParseArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Intent != "gate" || opts.Scope != "paths" || !opts.JSONOut || len(opts.Paths) != 2 {
+	if opts.Intent != "check" || opts.Level != "hard" || opts.Scope != "paths" || !opts.JSONOut || len(opts.Paths) != 2 {
 		t.Fatalf("unexpected opts: %#v", opts)
 	}
 }

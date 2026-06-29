@@ -28,7 +28,7 @@ export PATH="$HOME/go/bin:$PATH"
 taste check --changed
 taste format --paths main.go scripts/dev.sh
 taste fix --changed --json
-taste gate --project
+taste check --hard --project
 taste flavors
 taste doctor
 taste version
@@ -37,10 +37,10 @@ taste version
 ## Commands
 
 ```text
-taste check [scope] [--json]   # diagnostics only; no mutation
+taste check [scope] [--easy|--hard] [--json]  # diagnostics only; no mutation
 taste format [scope] [--json]  # format only
 taste fix [scope] [--json]     # safe format/fix, then diagnostics
-taste gate [scope] [--json]    # strict/complete check for completion readiness
+taste gate [scope] [--json]                  # alias for check --hard
 taste flavors [--json]         # list diagnostic/check flavors, paths, env overrides, install hints
 taste doctor [--json]          # alias for flavors
 taste version
@@ -57,19 +57,26 @@ Scopes:
 
 Default scope is `--changed` inside a git repo, otherwise `--project` with a warning.
 
+Check levels:
+
+```text
+--easy              fast/local checks; default
+--hard              complete readiness checks; `gate` alias
+```
+
 ## Output
 
 Human output is concise:
 
 ```text
 PASS fixed: none; remaining: 0
-checks: gofmt:pass, go test:pass, go vet:pass
+checks: gofmt -l:pass, go test:pass, go vet:pass
 ```
 
 JSON output is stable for agents:
 
 ```bash
-taste gate --changed --json
+taste check --hard --changed --json
 ```
 
 ## Flavors
