@@ -29,6 +29,7 @@ taste check --changed
 taste format --paths main.go scripts/dev.sh
 taste fix --changed --json
 taste gate --project
+taste doctor
 taste version
 ```
 
@@ -39,6 +40,7 @@ taste check [scope] [--json]   # diagnostics only; no mutation
 taste format [scope] [--json]  # format only
 taste fix [scope] [--json]     # safe format/fix, then diagnostics
 taste gate [scope] [--json]    # completion gate; strict pass/fail
+taste doctor [--json]             # show available checks, paths, env overrides, install hints
 taste version
 ```
 
@@ -59,12 +61,31 @@ Human output is concise:
 
 ```text
 PASS fixed: go format 3 files; remaining: 0
+checks: gofmt:pass, go test:pass, go vet:pass
 ```
 
 JSON output is stable for agents:
 
 ```bash
 taste gate --changed --json
+```
+
+## Tool discovery
+
+`taste doctor` reports which checks are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
+
+Common overrides:
+
+```bash
+TASTE_GOFMT=/path/to/gofmt
+TASTE_GO=/path/to/go
+TASTE_NPM=/path/to/npm
+TASTE_PRETTIER=/path/to/prettier
+TASTE_ESLINT=/path/to/eslint
+TASTE_SHELLCHECK=/path/to/shellcheck
+TASTE_GOPLS=/path/to/gopls
+TASTE_TYPESCRIPT_LANGUAGE_SERVER=/path/to/typescript-language-server
+TASTE_BASH_LANGUAGE_SERVER=/path/to/bash-language-server
 ```
 
 ## Development

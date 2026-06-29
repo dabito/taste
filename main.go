@@ -41,14 +41,31 @@ type commandItem struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+type checkItem struct {
+	Name      string `json:"name"`
+	Language  string `json:"language"`
+	Available bool   `json:"available"`
+	Path      string `json:"path,omitempty"`
+	Env       string `json:"env,omitempty"`
+	Install   string `json:"install,omitempty"`
+}
+
 type result struct {
 	Status   string        `json:"status"`
 	Scope    string        `json:"scope"`
 	Summary  string        `json:"summary"`
+	Header   string        `json:"header"`
+	Checks   []checkItem   `json:"checks"`
 	Fixed    []fixedItem   `json:"fixed"`
 	Issues   []issueItem   `json:"issues"`
 	Warnings []warningItem `json:"warnings"`
 	Commands []commandItem `json:"commands"`
+}
+
+type doctorResult struct {
+	Status  string      `json:"status"`
+	Summary string      `json:"summary"`
+	Checks  []checkItem `json:"checks"`
 }
 
 type options struct {
@@ -69,12 +86,20 @@ type fileGroups struct {
 	Bash []string
 }
 
+type toolDef struct {
+	Name     string
+	Language string
+	Env      string
+	Install  string
+	LocalNPM bool
+}
+
 type cliError string
 
 func (e cliError) Error() string { return string(e) }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|gate|version> [scope] [--json]
+	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|gate|doctor|version> [scope] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -101,6 +126,25 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "taste %s\n", version)
+		return 0
+	case "doctor", "tools":
+		jsonOut, err := parseDoctorArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			usageTo(stderr)
+			return 2
+		}
+		res := runDoctor()
+		if jsonOut {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(res); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+		} else {
+			printDoctorHuman(stdout, res)
+		}
 		return 0
 	case "help", "--help", "-h":
 		usageTo(stdout)
@@ -132,7 +176,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste <check|fix|format|gate|version> [scope] [--json]
+	fmt.Fprintln(w, `usage: taste <check|fix|format|gate|doctor|version> [scope] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -214,8 +258,147 @@ func readStdinPayload(r io.Reader) (stdinPayload, error) {
 	return payload, nil
 }
 
+func parseDoctorArgs(args []string) (bool, error) {
+	jsonOut := false
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+			jsonOut = true
+		default:
+			return false, cliError("unknown flag: " + arg)
+		}
+	}
+	return jsonOut, nil
+}
+
+func runDoctor() doctorResult {
+	checks := availableChecks(allToolDefs())
+	available := 0
+	for _, check := range checks {
+		if check.Available {
+			available++
+		}
+	}
+	return doctorResult{Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
+}
+
+func printDoctorHuman(w io.Writer, res doctorResult) {
+	fmt.Fprintln(w, res.Summary)
+	for _, check := range res.Checks {
+		status := "missing"
+		path := check.Install
+		if check.Available {
+			status = "ok"
+			path = check.Path
+		}
+		fmt.Fprintf(w, "- %s %s %s [%s] env:%s\n", status, check.Name, check.Language, path, check.Env)
+	}
+}
+
+func allToolDefs() []toolDef {
+	return []toolDef{
+		{Name: "gofmt", Language: "go", Env: "TASTE_GOFMT", Install: "ships with Go"},
+		{Name: "go", Language: "go", Env: "TASTE_GO", Install: "install Go from https://go.dev/dl/"},
+		{Name: "gopls", Language: "go", Env: "TASTE_GOPLS", Install: "go install golang.org/x/tools/gopls@latest"},
+		{Name: "npm", Language: "javascript", Env: "TASTE_NPM", Install: "install Node.js/npm"},
+		{Name: "prettier", Language: "javascript", Env: "TASTE_PRETTIER", Install: "npm install -D prettier", LocalNPM: true},
+		{Name: "eslint", Language: "javascript", Env: "TASTE_ESLINT", Install: "npm install -D eslint", LocalNPM: true},
+		{Name: "typescript-language-server", Language: "javascript", Env: "TASTE_TYPESCRIPT_LANGUAGE_SERVER", Install: "npm install -D typescript-language-server typescript", LocalNPM: true},
+		{Name: "bash", Language: "bash", Env: "TASTE_BASH", Install: "install bash"},
+		{Name: "shellcheck", Language: "bash", Env: "TASTE_SHELLCHECK", Install: "brew install shellcheck"},
+		{Name: "shfmt", Language: "bash", Env: "TASTE_SHFMT", Install: "brew install shfmt"},
+		{Name: "bash-language-server", Language: "bash", Env: "TASTE_BASH_LANGUAGE_SERVER", Install: "npm install -D bash-language-server", LocalNPM: true},
+	}
+}
+
+func availableChecks(defs []toolDef) []checkItem {
+	checks := make([]checkItem, 0, len(defs))
+	for _, def := range defs {
+		path, ok := resolveTool(def)
+		checks = append(checks, checkItem{Name: def.Name, Language: def.Language, Available: ok, Path: path, Env: def.Env, Install: def.Install})
+	}
+	sort.Slice(checks, func(i, j int) bool {
+		if checks[i].Language == checks[j].Language {
+			return checks[i].Name < checks[j].Name
+		}
+		return checks[i].Language < checks[j].Language
+	})
+	return checks
+}
+
+func checksForGroups(groups fileGroups) []checkItem {
+	langs := map[string]bool{}
+	if len(groups.Go) > 0 {
+		langs["go"] = true
+	}
+	if len(groups.JS) > 0 {
+		langs["javascript"] = true
+	}
+	if len(groups.Bash) > 0 {
+		langs["bash"] = true
+	}
+	defs := make([]toolDef, 0)
+	for _, def := range allToolDefs() {
+		if langs[def.Language] {
+			defs = append(defs, def)
+		}
+	}
+	return availableChecks(defs)
+}
+
+func resolveTool(def toolDef) (string, bool) {
+	if override := os.Getenv(def.Env); override != "" {
+		if filepath.IsAbs(override) || strings.ContainsRune(override, os.PathSeparator) {
+			if fileExists(override) {
+				return override, true
+			}
+			return override, false
+		}
+		if p, err := exec.LookPath(override); err == nil {
+			return p, true
+		}
+		return override, false
+	}
+	if def.LocalNPM {
+		if p, ok := findLocalNPMBin(def.Name); ok {
+			return p, true
+		}
+	}
+	if p, err := exec.LookPath(def.Name); err == nil {
+		return p, true
+	}
+	return "", false
+}
+
+func findLocalNPMBin(name string) (string, bool) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for {
+		candidate := filepath.Join(dir, "node_modules", ".bin", name)
+		if fileExists(candidate) {
+			return candidate, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", false
+}
+
+func toolDefByName(name string) toolDef {
+	for _, def := range allToolDefs() {
+		if def.Name == name {
+			return def
+		}
+	}
+	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
+}
 func runTaste(opts options) result {
-	res := result{Scope: opts.Scope, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
+	res := result{Scope: opts.Scope, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
 	if res.Scope == "" {
 		if inGitRepo() {
 			res.Scope = "changed"
@@ -232,6 +415,7 @@ func runTaste(opts options) result {
 		return finalize(res)
 	}
 	groups := classifyFiles(paths)
+	res.Checks = checksForGroups(groups)
 
 	format := opts.Intent == "format" || opts.Intent == "fix" || opts.Intent == "gate"
 	diag := opts.Intent == "check" || opts.Intent == "fix" || opts.Intent == "gate"
@@ -252,6 +436,7 @@ func runTaste(opts options) result {
 }
 
 func finalize(res result) result {
+	res.Header = checksHeader(res)
 	if len(res.Issues) == 0 {
 		res.Status = "pass"
 		res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
@@ -260,6 +445,28 @@ func finalize(res result) result {
 	res.Status = "fail"
 	res.Summary = fmt.Sprintf("FAIL %d issues, %d warnings", len(res.Issues), len(res.Warnings))
 	return res
+}
+
+func checksHeader(res result) string {
+	if len(res.Commands) > 0 {
+		parts := make([]string, 0, len(res.Commands))
+		for _, cmd := range res.Commands {
+			parts = append(parts, cmd.Name+":"+cmd.Status)
+		}
+		return "checks: " + strings.Join(parts, ", ")
+	}
+	if len(res.Checks) > 0 {
+		parts := make([]string, 0, len(res.Checks))
+		for _, check := range res.Checks {
+			status := "missing"
+			if check.Available {
+				status = "available"
+			}
+			parts = append(parts, check.Name+":"+status)
+		}
+		return "checks: " + strings.Join(parts, ", ")
+	}
+	return "checks: none"
 }
 
 func fixedSummary(fixed []fixedItem) string {
@@ -275,6 +482,7 @@ func fixedSummary(fixed []fixedItem) string {
 
 func printHuman(w io.Writer, res result) {
 	fmt.Fprintln(w, res.Summary)
+	fmt.Fprintln(w, res.Header)
 	limit := 20
 	for i, issue := range res.Issues {
 		if i >= limit {
@@ -398,8 +606,8 @@ func isBashFile(p string) bool {
 
 func runGo(res *result, files []string, format, diag bool) {
 	if format {
-		if _, err := exec.LookPath("gofmt"); err != nil {
-			res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: "gofmt not found"})
+		if _, ok := resolveTool(toolDefByName("gofmt")); !ok {
+			res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: "gofmt not found; override with TASTE_GOFMT"})
 		} else {
 			cmd := append([]string{"-w"}, files...)
 			status, summary := runExternal("gofmt", cmd...)
@@ -445,8 +653,8 @@ func runJS(res *result, format, diag bool) {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "package.json scripts not found"})
 		return
 	}
-	if _, err := exec.LookPath("npm"); err != nil {
-		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm not found"})
+	if _, ok := resolveTool(toolDefByName("npm")); !ok {
+		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm not found; override with TASTE_NPM"})
 		return
 	}
 	if format {
@@ -502,8 +710,8 @@ func runBash(res *result, files []string, format, diag bool) {
 			res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", File: f, Code: "bash -n", Message: summary})
 		}
 	}
-	if _, err := exec.LookPath("shellcheck"); err != nil {
-		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "shellcheck not found"})
+	if _, ok := resolveTool(toolDefByName("shellcheck")); !ok {
+		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "shellcheck not found; override with TASTE_SHELLCHECK"})
 		return
 	}
 	for _, f := range files {
@@ -516,7 +724,11 @@ func runBash(res *result, files []string, format, diag bool) {
 }
 
 func runExternal(name string, args ...string) (string, string) {
-	cmd := exec.Command(name, args...)
+	path, ok := resolveTool(toolDefByName(name))
+	if !ok {
+		return "fail", fmt.Sprintf("%s not found; override with %s", name, toolDefByName(name).Env)
+	}
+	cmd := exec.Command(path, args...)
 	out, err := cmd.CombinedOutput()
 	summary := summarizeOutput(out)
 	if err != nil {

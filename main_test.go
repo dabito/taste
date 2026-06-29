@@ -65,3 +65,26 @@ func TestJSONNoFilesScope(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
 }
+
+func TestDoctorJSON(t *testing.T) {
+	code, out, errOut := captureRun([]string{"doctor", "--json"}, "")
+	if code != 0 {
+		t.Fatalf("doctor failed: %s", errOut)
+	}
+	var payload doctorResult
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "ok" || len(payload.Checks) == 0 {
+		t.Fatalf("unexpected doctor payload: %#v", payload)
+	}
+}
+
+func TestChecksHeader(t *testing.T) {
+	groups := fileGroups{Go: []string{"main.go"}}
+	checks := checksForGroups(groups)
+	res := finalize(result{Checks: checks})
+	if !strings.Contains(res.Header, "gofmt") || !strings.HasPrefix(res.Header, "checks:") {
+		t.Fatalf("unexpected header: %q", res.Header)
+	}
+}
