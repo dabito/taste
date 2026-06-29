@@ -80,6 +80,20 @@ func TestDoctorJSON(t *testing.T) {
 	}
 }
 
+func TestFlavorsListJSON(t *testing.T) {
+	code, out, errOut := captureRun([]string{"flavors", "list", "--json"}, "")
+	if code != 0 {
+		t.Fatalf("flavors list failed: %s", errOut)
+	}
+	var payload doctorResult
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "ok" || len(payload.Checks) == 0 {
+		t.Fatalf("unexpected flavors payload: %#v", payload)
+	}
+}
+
 func TestChecksHeader(t *testing.T) {
 	groups := fileGroups{Go: []string{"main.go"}}
 	checks := checksForGroups(groups)

@@ -29,6 +29,7 @@ taste check --changed
 taste format --paths main.go scripts/dev.sh
 taste fix --changed --json
 taste gate --project
+taste flavors list
 taste doctor
 taste version
 ```
@@ -40,7 +41,8 @@ taste check [scope] [--json]   # diagnostics only; no mutation
 taste format [scope] [--json]  # format only
 taste fix [scope] [--json]     # safe format/fix, then diagnostics
 taste gate [scope] [--json]    # completion gate; strict pass/fail
-taste doctor [--json]             # show available checks, paths, env overrides, install hints
+taste flavors list [--json]    # list diagnostic/check flavors, paths, env overrides, install hints
+taste doctor [--json]          # alias for flavors list
 taste version
 ```
 
@@ -70,9 +72,18 @@ JSON output is stable for agents:
 taste gate --changed --json
 ```
 
-## Tool discovery
+## Flavors
 
-`taste doctor` reports which checks are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
+A flavor is one diagnostic/check lane, such as `gopls`, `typescript-language-server`, `bash-language-server`, `go test`, or `shellcheck`.
+
+`taste flavors list` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
+
+Future commands may add/update project flavors:
+
+```text
+taste flavors add <name>
+taste flavors update
+```
 
 Common overrides:
 

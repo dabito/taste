@@ -99,7 +99,7 @@ type cliError string
 func (e cliError) Error() string { return string(e) }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|gate|doctor|version> [scope] [--json]
+	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|gate|flavors|doctor|version> [scope] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -127,6 +127,18 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "taste %s\n", version)
 		return 0
+	case "flavors":
+		jsonOut, err := parseFlavorsArgs(args[1:])
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			usageTo(stderr)
+			return 2
+		}
+		if err := printAvailability(stdout, runDoctor(), jsonOut); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "doctor", "tools":
 		jsonOut, err := parseDoctorArgs(args[1:])
 		if err != nil {
@@ -134,16 +146,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			usageTo(stderr)
 			return 2
 		}
-		res := runDoctor()
-		if jsonOut {
-			enc := json.NewEncoder(stdout)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(res); err != nil {
-				fmt.Fprintln(stderr, err)
-				return 1
-			}
-		} else {
-			printDoctorHuman(stdout, res)
+		if err := printAvailability(stdout, runDoctor(), jsonOut); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
 		}
 		return 0
 	case "help", "--help", "-h":
@@ -176,7 +181,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste <check|fix|format|gate|doctor|version> [scope] [--json]
+	fmt.Fprintln(w, `usage: taste <check|fix|format|gate|flavors|doctor|version> [scope] [--json]
 
 Scopes:
   --changed            changed files from git
@@ -271,6 +276,25 @@ func parseDoctorArgs(args []string) (bool, error) {
 	return jsonOut, nil
 }
 
+func parseFlavorsArgs(args []string) (bool, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
+		return parseDoctorArgs(args)
+	}
+	if args[0] != "list" {
+		return false, cliError("unknown flavors command: " + args[0])
+	}
+	return parseDoctorArgs(args[1:])
+}
+
+func printAvailability(w io.Writer, res doctorResult, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(res)
+	}
+	printDoctorHuman(w, res)
+	return nil
+}
 func runDoctor() doctorResult {
 	checks := availableChecks(allToolDefs())
 	available := 0
