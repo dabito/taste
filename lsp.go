@@ -94,6 +94,19 @@ func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string,
 	})
 }
 
+func runBashLanguageDiagnostics(root string, files []string) ([]issueItem, string, error) {
+	return runLSPDiagnostics(lspRunConfig{
+		ToolName:      "bash-language-server",
+		ToolArgs:      []string{"start"},
+		InstallHint:   "npm install -D bash-language-server",
+		Root:          root,
+		Files:         files,
+		IssueLanguage: "bash",
+		LanguageIDFunc: func(string) string {
+			return "shellscript"
+		},
+	})
+}
 func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 	absRoot, err := filepath.Abs(config.Root)
 	if err != nil {

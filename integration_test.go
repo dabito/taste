@@ -59,6 +59,27 @@ func TestTasteTypeScriptDiagnosticsFixture(t *testing.T) {
 	}
 }
 
+func TestTasteBashSyntaxFixture(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/bad/bash/syntax-error/script.sh", "--json"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 {
+		t.Fatalf("expected failing diagnostics, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
+	}
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "fail" || payload.Level != "easy" {
+		t.Fatalf("unexpected payload status/level: %#v", payload)
+	}
+	if !hasCommand(payload.Commands, "bash -n testdata/bad/bash/syntax-error/script.sh", "fail") {
+		t.Fatalf("missing failing bash -n command: %#v", payload.Commands)
+	}
+	if !hasIssue(payload.Issues, "testdata/bad/bash/syntax-error/script.sh", "bash -n", "syntax error") {
+		t.Fatalf("missing bash syntax diagnostic: %#v", payload.Issues)
+	}
+}
+
 func hasCommand(commands []commandItem, name, status string) bool {
 	for _, command := range commands {
 		if command.Name == name && command.Status == status {

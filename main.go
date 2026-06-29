@@ -798,6 +798,21 @@ func runBash(res *result, files []string, format, diag bool, level string) {
 	if !diag {
 		return
 	}
+	root := findWorkspaceRoot(files)
+	issues, summary, err := runBashLanguageDiagnostics(root, files)
+	if err != nil {
+		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: err.Error()})
+	} else {
+		status := "pass"
+		if len(issues) > 0 {
+			status = "fail"
+		}
+		if summary == "" {
+			summary = fmt.Sprintf("%d diagnostics", len(issues))
+		}
+		res.Commands = append(res.Commands, commandItem{Name: "bash-language-server", Status: status, Summary: summary})
+		res.Issues = append(res.Issues, issues...)
+	}
 	for _, f := range files {
 		status, summary := runExternal("bash", "-n", f)
 		res.Commands = append(res.Commands, commandItem{Name: "bash -n " + f, Status: status, Summary: summary})

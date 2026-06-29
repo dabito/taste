@@ -53,7 +53,7 @@ Flags:
 --stdin-json  read {"paths":[...]} from stdin
 ```
 
-Go diagnostics use `gopls` when available. JS/TS diagnostics use `typescript-language-server` when available. Missing LSPs are warnings with install/override hints; shell/project checks still run.
+Go diagnostics use `gopls` when available. JS/TS diagnostics use `typescript-language-server` when available. Bash diagnostics use `bash-language-server` when available. Missing LSPs are warnings with install/override hints; shell/project checks still run.
 
 ## Output
 
