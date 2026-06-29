@@ -110,6 +110,7 @@ Scopes:
 Examples:
   taste gate --changed
   taste fix --paths main.go scripts/dev.sh --json
+  taste flavors
   taste version`)
 }
 
@@ -192,6 +193,7 @@ Scopes:
 Examples:
   taste gate --changed
   taste fix --paths main.go scripts/dev.sh --json
+  taste flavors
   taste version`)
 }
 
@@ -441,7 +443,7 @@ func runTaste(opts options) result {
 	groups := classifyFiles(paths)
 	res.Checks = checksForGroups(groups)
 
-	format := opts.Intent == "format" || opts.Intent == "fix" || opts.Intent == "gate"
+	format := opts.Intent == "format" || opts.Intent == "fix"
 	diag := opts.Intent == "check" || opts.Intent == "fix" || opts.Intent == "gate"
 
 	if len(groups.Go) > 0 {

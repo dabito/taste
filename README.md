@@ -29,7 +29,7 @@ taste check --changed
 taste format --paths main.go scripts/dev.sh
 taste fix --changed --json
 taste gate --project
-taste flavors list
+taste flavors
 taste doctor
 taste version
 ```
@@ -40,9 +40,9 @@ taste version
 taste check [scope] [--json]   # diagnostics only; no mutation
 taste format [scope] [--json]  # format only
 taste fix [scope] [--json]     # safe format/fix, then diagnostics
-taste gate [scope] [--json]    # completion gate; strict pass/fail
-taste flavors list [--json]    # list diagnostic/check flavors, paths, env overrides, install hints
-taste doctor [--json]          # alias for flavors list
+taste gate [scope] [--json]    # strict/complete check for completion readiness
+taste flavors [--json]         # list diagnostic/check flavors, paths, env overrides, install hints
+taste doctor [--json]          # alias for flavors
 taste version
 ```
 
@@ -62,7 +62,7 @@ Default scope is `--changed` inside a git repo, otherwise `--project` with a war
 Human output is concise:
 
 ```text
-PASS fixed: go format 3 files; remaining: 0
+PASS fixed: none; remaining: 0
 checks: gofmt:pass, go test:pass, go vet:pass
 ```
 
@@ -76,7 +76,7 @@ taste gate --changed --json
 
 A flavor is one diagnostic/check lane, such as `gopls`, `typescript-language-server`, `bash-language-server`, `go test`, or `shellcheck`.
 
-`taste flavors list` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
+`taste flavors` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
 
 Future commands may add/update project flavors:
 

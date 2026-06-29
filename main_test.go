@@ -80,10 +80,10 @@ func TestDoctorJSON(t *testing.T) {
 	}
 }
 
-func TestFlavorsListJSON(t *testing.T) {
-	code, out, errOut := captureRun([]string{"flavors", "list", "--json"}, "")
+func TestFlavorsJSON(t *testing.T) {
+	code, out, errOut := captureRun([]string{"flavors", "--json"}, "")
 	if code != 0 {
-		t.Fatalf("flavors list failed: %s", errOut)
+		t.Fatalf("flavors failed: %s", errOut)
 	}
 	var payload doctorResult
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
