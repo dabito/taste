@@ -63,18 +63,19 @@ type result struct {
 	Commands []commandItem `json:"commands"`
 }
 
-type doctorResult struct {
+type flavorsResult struct {
 	Status  string      `json:"status"`
 	Summary string      `json:"summary"`
 	Checks  []checkItem `json:"checks"`
 }
 
 type options struct {
-	Intent  string
-	Scope   string
-	Paths   []string
-	JSONOut bool
-	Level   string
+	Intent      string
+	Scope       string
+	Paths       []string
+	JSONOut     bool
+	Level       string
+	ShowFlavors bool
 }
 
 type stdinPayload struct {
@@ -101,19 +102,26 @@ type cliError string
 func (e cliError) Error() string { return string(e) }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste <check|fix|format|flavors|doctor|version> [scope] [--easy|--hard] [--json]
+	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
 
-Scopes:
-  --changed            changed files from git
-  --project            whole project
-  --paths <files...>   explicit files
-  --stdin-json         read {"paths":[...]} from stdin
+Targets:
+  files or directories; multiple allowed
+  no targets defaults to changed files in git, else project
+
+Flags:
+  --fix        safe autofix, then diagnostics
+  --dry        diagnostics only; default
+  --easy       fast/local checks; default
+  --strict     complete readiness checks
+  --changed    changed files from git
+  --project    whole project
+  --flavors    list available diagnostic/check flavors
 
 Examples:
-  taste check --hard --changed
-  taste fix --paths main.go scripts/dev.sh --json
-  taste flavors
-  taste version`)
+  taste main.go
+  taste main.go scripts/dev.sh --fix
+  taste . --strict
+  taste --changed --strict --json`)
 }
 
 func main() {
@@ -121,42 +129,15 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		usageTo(stderr)
-		return 2
-	}
-
-	switch args[0] {
-	case "version", "--version", "-v":
-		fmt.Fprintf(stdout, "taste %s\n", version)
-		return 0
-	case "flavors":
-		jsonOut, err := parseFlavorsArgs(args[1:])
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			usageTo(stderr)
-			return 2
+	if len(args) > 0 {
+		switch args[0] {
+		case "--version", "-v":
+			fmt.Fprintf(stdout, "taste %s\n", version)
+			return 0
+		case "help", "--help", "-h":
+			usageTo(stdout)
+			return 0
 		}
-		if err := printAvailability(stdout, runDoctor(), jsonOut); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
-	case "doctor", "tools":
-		jsonOut, err := parseDoctorArgs(args[1:])
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			usageTo(stderr)
-			return 2
-		}
-		if err := printAvailability(stdout, runDoctor(), jsonOut); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
-	case "help", "--help", "-h":
-		usageTo(stdout)
-		return 0
 	}
 
 	opts, err := parseArgs(args, stdin)
@@ -164,6 +145,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		usageTo(stderr)
 		return 2
+	}
+	if opts.ShowFlavors {
+		if err := printAvailability(stdout, runFlavors(), opts.JSONOut); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	}
 
 	res := runTaste(opts)
@@ -184,60 +172,56 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste <check|fix|format|flavors|doctor|version> [scope] [--easy|--hard] [--json]
+	fmt.Fprintln(w, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
 
-Scopes:
-  --changed            changed files from git
-  --project            whole project
-  --paths <files...>   explicit files
-  --stdin-json         read {"paths":[...]} from stdin
+Targets:
+  files or directories; multiple allowed
+  no targets defaults to changed files in git, else project
+
+Flags:
+  --fix        safe autofix, then diagnostics
+  --dry        diagnostics only; default
+  --easy       fast/local checks; default
+  --strict     complete readiness checks
+  --changed    changed files from git
+  --project    whole project
+  --flavors    list available diagnostic/check flavors
 
 Examples:
-  taste check --hard --changed
-  taste fix --paths main.go scripts/dev.sh --json
-  taste flavors
-  taste version`)
+  taste main.go
+  taste main.go scripts/dev.sh --fix
+  taste . --strict
+  taste --changed --strict --json`)
 }
 
 func parseArgs(args []string, stdin io.Reader) (options, error) {
-	intent := args[0]
-	if intent != "check" && intent != "fix" && intent != "format" && intent != "gate" {
-		return options{}, cliError("unknown command: " + intent)
-	}
-	opts := options{Intent: intent, Level: "easy"}
-	if intent == "gate" {
-		opts.Intent = "check"
-		opts.Level = "hard"
-	}
-	collectPaths := false
-	for i := 1; i < len(args); i++ {
-		arg := args[i]
-		if collectPaths {
-			if arg == "--json" {
-				opts.JSONOut = true
-				continue
-			}
-			if strings.HasPrefix(arg, "--") {
-				return options{}, cliError("unknown flag after --paths: " + arg)
-			}
-			opts.Paths = append(opts.Paths, arg)
-			continue
-		}
+	opts := options{Intent: "check", Level: "easy"}
+	for _, arg := range args {
 		switch arg {
 		case "--json":
 			opts.JSONOut = true
-		case "--easy", "--quick":
+		case "--easy":
 			opts.Level = "easy"
-		case "--hard", "--strict":
-			opts.Level = "hard"
+		case "--strict":
+			opts.Level = "strict"
+		case "--fix":
+			opts.Intent = "fix"
+		case "--dry":
+			opts.Intent = "check"
 		case "--changed":
+			if len(opts.Paths) > 0 {
+				return options{}, cliError("--changed cannot be combined with targets")
+			}
 			opts.Scope = "changed"
 		case "--project":
+			if len(opts.Paths) > 0 {
+				return options{}, cliError("--project cannot be combined with targets")
+			}
 			opts.Scope = "project"
-		case "--paths":
-			opts.Scope = "paths"
-			collectPaths = true
 		case "--stdin-json":
+			if len(opts.Paths) > 0 {
+				return options{}, cliError("--stdin-json cannot be combined with targets")
+			}
 			opts.Scope = "stdin-json"
 			payload, err := readStdinPayload(stdin)
 			if err != nil {
@@ -247,15 +231,21 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 				opts.Scope = payload.Scope
 			}
 			opts.Paths = append(opts.Paths, payload.Paths...)
+		case "--flavors":
+			opts.ShowFlavors = true
 		default:
 			if strings.HasPrefix(arg, "--") {
 				return options{}, cliError("unknown flag: " + arg)
 			}
-			return options{}, cliError("unexpected argument: " + arg)
+			if opts.Scope == "changed" || opts.Scope == "project" || opts.Scope == "stdin-json" {
+				return options{}, cliError("targets cannot be combined with " + opts.Scope + " scope")
+			}
+			opts.Scope = "paths"
+			opts.Paths = append(opts.Paths, arg)
 		}
 	}
-	if opts.Scope == "paths" && len(opts.Paths) == 0 {
-		return options{}, cliError("--paths needs at least one file")
+	if opts.Level != "easy" && opts.Level != "strict" {
+		return options{}, cliError("unknown level: " + opts.Level)
 	}
 	return opts, nil
 }
@@ -275,39 +265,17 @@ func readStdinPayload(r io.Reader) (stdinPayload, error) {
 	return payload, nil
 }
 
-func parseDoctorArgs(args []string) (bool, error) {
-	jsonOut := false
-	for _, arg := range args {
-		switch arg {
-		case "--json":
-			jsonOut = true
-		default:
-			return false, cliError("unknown flag: " + arg)
-		}
-	}
-	return jsonOut, nil
-}
-
-func parseFlavorsArgs(args []string) (bool, error) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "--") {
-		return parseDoctorArgs(args)
-	}
-	if args[0] != "list" {
-		return false, cliError("unknown flavors command: " + args[0])
-	}
-	return parseDoctorArgs(args[1:])
-}
-
-func printAvailability(w io.Writer, res doctorResult, jsonOut bool) error {
+func printAvailability(w io.Writer, res flavorsResult, jsonOut bool) error {
 	if jsonOut {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(res)
 	}
-	printDoctorHuman(w, res)
+	printFlavorsHuman(w, res)
 	return nil
 }
-func runDoctor() doctorResult {
+
+func runFlavors() flavorsResult {
 	checks := availableChecks(allToolDefs())
 	available := 0
 	for _, check := range checks {
@@ -315,10 +283,10 @@ func runDoctor() doctorResult {
 			available++
 		}
 	}
-	return doctorResult{Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
+	return flavorsResult{Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
 }
 
-func printDoctorHuman(w io.Writer, res doctorResult) {
+func printFlavorsHuman(w io.Writer, res flavorsResult) {
 	fmt.Fprintln(w, res.Summary)
 	for _, check := range res.Checks {
 		status := "missing"
@@ -456,8 +424,8 @@ func runTaste(opts options) result {
 	groups := classifyFiles(paths)
 	res.Checks = checksForGroups(groups)
 
-	format := opts.Intent == "format" || opts.Intent == "fix"
-	diag := opts.Intent == "check" || opts.Intent == "fix" || opts.Intent == "gate"
+	format := opts.Intent == "fix"
+	diag := opts.Intent == "check" || opts.Intent == "fix"
 
 	if len(groups.Go) > 0 {
 		runGo(&res, groups.Go, format, diag, res.Level)
@@ -550,14 +518,14 @@ func printHuman(w io.Writer, res result) {
 func collectFiles(scope string, paths []string) ([]string, error) {
 	switch scope {
 	case "paths", "stdin-json":
-		return cleanPaths(paths), nil
+		return targetFiles(paths)
 	case "changed":
 		return gitChangedFiles()
 	case "project":
 		return projectFiles(".")
 	default:
 		if len(paths) > 0 {
-			return cleanPaths(paths), nil
+			return targetFiles(paths)
 		}
 		return nil, cliError("unknown scope: " + scope)
 	}
@@ -581,6 +549,31 @@ func cleanPaths(paths []string) []string {
 	return out
 }
 
+func targetFiles(targets []string) ([]string, error) {
+	var files []string
+	for _, target := range targets {
+		if strings.TrimSpace(target) == "" {
+			continue
+		}
+		clean := filepath.Clean(target)
+		info, err := os.Stat(clean)
+		if err != nil {
+			files = append(files, clean)
+			continue
+		}
+		if info.IsDir() {
+			found, err := projectFiles(clean)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, found...)
+			continue
+		}
+		files = append(files, clean)
+	}
+	return cleanPaths(files), nil
+}
+
 func gitChangedFiles() ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--")
 	out, err := cmd.Output()
@@ -596,7 +589,7 @@ func gitChangedFiles() ([]string, error) {
 
 func projectFiles(root string) ([]string, error) {
 	var paths []string
-	skipDirs := map[string]bool{".git": true, "node_modules": true, "dist": true, "build": true, "coverage": true, "vendor": true}
+	skipDirs := map[string]bool{".git": true, "node_modules": true, "dist": true, "build": true, "coverage": true, "vendor": true, "testdata": true}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -687,7 +680,7 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 			res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gofmt", Message: summary})
 		}
 	}
-	if level == "hard" && fileExists("go.mod") {
+	if level == "strict" && fileExists("go.mod") {
 		for _, spec := range []struct {
 			name string
 			args []string
@@ -716,7 +709,7 @@ func runJS(res *result, format, diag bool, level string) {
 	}
 	if diag {
 		runNPMScript(res, scripts, "lint", true)
-		if level == "hard" {
+		if level == "strict" {
 			runNPMScript(res, scripts, "test", true)
 		}
 	}
@@ -766,7 +759,7 @@ func runBash(res *result, files []string, format, diag bool, level string) {
 			res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", File: f, Code: "bash -n", Message: summary})
 		}
 	}
-	if level != "hard" {
+	if level != "strict" {
 		return
 	}
 	if _, ok := resolveTool(toolDefByName("shellcheck")); !ok {

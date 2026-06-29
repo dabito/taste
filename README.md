@@ -1,8 +1,8 @@
 # taste
 
-`taste` is a small quality-gate CLI for agentic coding workflows.
+`taste` is a small quality CLI for agentic coding workflows.
 
-It gives agents one deterministic command surface for formatting, safe fixes, diagnostics, and completion gates across Go, JavaScript/TypeScript, and Bash.
+It gives agents one deterministic command surface for formatting, safe fixes, diagnostics, and strict readiness checks across Go, JavaScript/TypeScript, and Bash.
 
 ## Install
 
@@ -25,43 +25,32 @@ export PATH="$HOME/go/bin:$PATH"
 ## Usage
 
 ```bash
-taste check --changed
-taste format --paths main.go scripts/dev.sh
-taste fix --changed --json
-taste check --hard --project
-taste flavors
-taste doctor
-taste version
+taste main.go
+taste main.go scripts/dev.sh --fix
+taste . --strict
+taste --changed --strict --json
+taste --flavors
 ```
 
-## Commands
+## Command shape
 
 ```text
-taste check [scope] [--easy|--hard] [--json]  # diagnostics only; no mutation
-taste format [scope] [--json]  # format only
-taste fix [scope] [--json]     # safe format/fix, then diagnostics
-taste gate [scope] [--json]                  # alias for check --hard
-taste flavors [--json]         # list diagnostic/check flavors, paths, env overrides, install hints
-taste doctor [--json]          # alias for flavors
-taste version
+taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
 ```
 
-Scopes:
+Targets are files or directories. Multiple targets allowed. No targets defaults to `--changed` inside a git repo, otherwise `--project` with a warning.
+
+Flags:
 
 ```text
---changed            changed files from git
---project            whole project
---paths <files...>   explicit files
---stdin-json         read {"paths":[...]} from stdin
-```
-
-Default scope is `--changed` inside a git repo, otherwise `--project` with a warning.
-
-Check levels:
-
-```text
---easy              fast/local checks; default
---hard              complete readiness checks; `gate` alias
+--fix        safe autofix, then diagnostics
+--dry        diagnostics only; default
+--easy       fast/local checks; default
+--strict     complete readiness checks
+--changed    changed files from git
+--project    whole project
+--flavors    list diagnostic/check flavors, paths, env overrides, install hints
+--stdin-json  read {"paths":[...]} from stdin
 ```
 
 Go diagnostics use `gopls` when available. Missing `gopls` is a warning with install/override hint; shell checks still run.
@@ -78,21 +67,15 @@ checks: gofmt -l:pass, go test:pass, go vet:pass
 JSON output is stable for agents:
 
 ```bash
-taste check --hard --changed --json
+taste --changed --strict --json
 ```
 
 ## Flavors
 
 A flavor is one diagnostic/check lane, such as `gopls`, `typescript-language-server`, `bash-language-server`, `go test`, or `shellcheck`.
 
-`taste flavors` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
+`taste --flavors` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
 
-Future commands may add/update project flavors:
-
-```text
-taste flavors add <name>
-taste flavors update
-```
 
 Common overrides:
 

@@ -14,7 +14,7 @@ func captureRun(args []string, stdin string) (int, string, string) {
 }
 
 func TestVersionCommands(t *testing.T) {
-	for _, args := range [][]string{{"version"}, {"--version"}, {"-v"}} {
+	for _, args := range [][]string{{"--version"}, {"-v"}} {
 		code, out, errOut := captureRun(args, "")
 		if code != 0 {
 			t.Fatalf("version failed args=%v err=%s", args, errOut)
@@ -26,34 +26,34 @@ func TestVersionCommands(t *testing.T) {
 }
 
 func TestParseArgs(t *testing.T) {
-	opts, err := parseArgs([]string{"gate", "--paths", "main.go", "scripts/dev.sh", "--json"}, strings.NewReader(""))
+	opts, err := parseArgs([]string{"main.go", "scripts/dev.sh", "--json"}, strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Intent != "check" || opts.Level != "hard" || opts.Scope != "paths" || !opts.JSONOut || len(opts.Paths) != 2 {
+	if opts.Intent != "check" || opts.Level != "easy" || opts.Scope != "paths" || !opts.JSONOut || len(opts.Paths) != 2 {
 		t.Fatalf("unexpected opts: %#v", opts)
 	}
 }
 
 func TestCheckLevelArgs(t *testing.T) {
-	opts, err := parseArgs([]string{"check", "--hard", "--paths", "main.go"}, strings.NewReader(""))
+	opts, err := parseArgs([]string{"main.go", "--strict"}, strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Intent != "check" || opts.Level != "hard" || opts.Scope != "paths" || len(opts.Paths) != 1 {
-		t.Fatalf("unexpected hard opts: %#v", opts)
+	if opts.Intent != "check" || opts.Level != "strict" || opts.Scope != "paths" || len(opts.Paths) != 1 {
+		t.Fatalf("unexpected strict opts: %#v", opts)
 	}
-	opts, err = parseArgs([]string{"check", "--quick", "--paths", "main.go"}, strings.NewReader(""))
+	opts, err = parseArgs([]string{"main.go", "--fix"}, strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Level != "easy" {
-		t.Fatalf("unexpected quick opts: %#v", opts)
+	if opts.Intent != "fix" || opts.Level != "easy" {
+		t.Fatalf("unexpected fix opts: %#v", opts)
 	}
 }
 
 func TestStdinJSONArgs(t *testing.T) {
-	opts, err := parseArgs([]string{"check", "--stdin-json", "--json"}, strings.NewReader(`{"paths":["main.go"],"scope":"paths"}`))
+	opts, err := parseArgs([]string{"--stdin-json", "--json"}, strings.NewReader(`{"paths":["main.go"],"scope":"paths"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestClassifyFiles(t *testing.T) {
 }
 
 func TestJSONNoFilesScope(t *testing.T) {
-	code, out, errOut := captureRun([]string{"check", "--paths", "README.md", "--json"}, "")
+	code, out, errOut := captureRun([]string{"README.md", "--json"}, "")
 	if code != 0 {
 		t.Fatalf("no source files should pass with warning only, err=%s", errOut)
 	}
@@ -83,26 +83,12 @@ func TestJSONNoFilesScope(t *testing.T) {
 	}
 }
 
-func TestDoctorJSON(t *testing.T) {
-	code, out, errOut := captureRun([]string{"doctor", "--json"}, "")
-	if code != 0 {
-		t.Fatalf("doctor failed: %s", errOut)
-	}
-	var payload doctorResult
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Status != "ok" || len(payload.Checks) == 0 {
-		t.Fatalf("unexpected doctor payload: %#v", payload)
-	}
-}
-
 func TestFlavorsJSON(t *testing.T) {
-	code, out, errOut := captureRun([]string{"flavors", "--json"}, "")
+	code, out, errOut := captureRun([]string{"--flavors", "--json"}, "")
 	if code != 0 {
 		t.Fatalf("flavors failed: %s", errOut)
 	}
-	var payload doctorResult
+	var payload flavorsResult
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatal(err)
 	}

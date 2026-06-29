@@ -13,7 +13,7 @@ func TestTasteGoplsDiagnosticsFixture(t *testing.T) {
 		t.Skip("gopls not installed")
 	}
 	var out, errOut bytes.Buffer
-	code := run([]string{"check", "--paths", "testdata/bad/go/type-error/main.go", "--json"}, strings.NewReader(""), &out, &errOut)
+	code := run([]string{"testdata/bad/go/type-error/main.go", "--json"}, strings.NewReader(""), &out, &errOut)
 	if code != 1 {
 		t.Fatalf("expected failing diagnostics, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
 	}
