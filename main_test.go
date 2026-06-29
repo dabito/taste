@@ -35,6 +35,23 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
+func TestCheckLevelArgs(t *testing.T) {
+	opts, err := parseArgs([]string{"check", "--hard", "--paths", "main.go"}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Intent != "check" || opts.Level != "hard" || opts.Scope != "paths" || len(opts.Paths) != 1 {
+		t.Fatalf("unexpected hard opts: %#v", opts)
+	}
+	opts, err = parseArgs([]string{"check", "--quick", "--paths", "main.go"}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Level != "easy" {
+		t.Fatalf("unexpected quick opts: %#v", opts)
+	}
+}
+
 func TestStdinJSONArgs(t *testing.T) {
 	opts, err := parseArgs([]string{"check", "--stdin-json", "--json"}, strings.NewReader(`{"paths":["main.go"],"scope":"paths"}`))
 	if err != nil {

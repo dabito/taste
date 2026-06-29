@@ -64,6 +64,8 @@ Check levels:
 --hard              complete readiness checks; `gate` alias
 ```
 
+Go diagnostics use `gopls` when available. Missing `gopls` is a warning with install/override hint; shell checks still run.
+
 ## Output
 
 Human output is concise:

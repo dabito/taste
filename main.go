@@ -661,6 +661,21 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 	if !diag {
 		return
 	}
+	root := findWorkspaceRoot(files)
+	issues, summary, err := runGoplsDiagnostics(root, files)
+	if err != nil {
+		res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: err.Error()})
+	} else {
+		status := "pass"
+		if len(issues) > 0 {
+			status = "fail"
+		}
+		if summary == "" {
+			summary = fmt.Sprintf("%d diagnostics", len(issues))
+		}
+		res.Commands = append(res.Commands, commandItem{Name: "gopls", Status: status, Summary: summary})
+		res.Issues = append(res.Issues, issues...)
+	}
 	if !format {
 		status, summary := runExternal("gofmt", append([]string{"-l"}, files...)...)
 		res.Commands = append(res.Commands, commandItem{Name: "gofmt -l", Status: status, Summary: summary})
