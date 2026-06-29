@@ -170,9 +170,10 @@ done:
 	issues := make([]issueItem, 0)
 	for uri, diagnostics := range diagByURI {
 		file := wanted[uri]
-		rel, err := filepath.Rel(absRoot, file)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			file = rel
+		if cwd, err := os.Getwd(); err == nil {
+			if rel, err := filepath.Rel(cwd, file); err == nil && !strings.HasPrefix(rel, "..") {
+				file = rel
+			}
 		}
 		for _, diag := range diagnostics {
 			issues = append(issues, issueItem{
