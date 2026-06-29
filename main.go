@@ -374,11 +374,39 @@ func resolveTool(def toolDef) (string, bool) {
 	return "", false
 }
 
+func resolveToolInDir(def toolDef, dir string) (string, bool) {
+	if override := os.Getenv(def.Env); override != "" {
+		if filepath.IsAbs(override) || strings.ContainsRune(override, os.PathSeparator) {
+			if fileExists(override) {
+				return override, true
+			}
+			return override, false
+		}
+		if p, err := exec.LookPath(override); err == nil {
+			return p, true
+		}
+		return override, false
+	}
+	if def.LocalNPM {
+		if p, ok := findLocalNPMBinFrom(dir, def.Name); ok {
+			return p, true
+		}
+	}
+	if p, err := exec.LookPath(def.Name); err == nil {
+		return p, true
+	}
+	return "", false
+}
+
 func findLocalNPMBin(name string) (string, bool) {
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", false
 	}
+	return findLocalNPMBinFrom(dir, name)
+}
+
+func findLocalNPMBinFrom(dir, name string) (string, bool) {
 	for {
 		candidate := filepath.Join(dir, "node_modules", ".bin", name)
 		if fileExists(candidate) {
@@ -431,7 +459,7 @@ func runTaste(opts options) result {
 		runGo(&res, groups.Go, format, diag, res.Level)
 	}
 	if len(groups.JS) > 0 {
-		runJS(&res, format, diag, res.Level)
+		runJS(&res, groups.JS, format, diag, res.Level)
 	}
 	if len(groups.Bash) > 0 {
 		runBash(&res, groups.Bash, format, diag, res.Level)
@@ -629,7 +657,7 @@ func isKnownSource(p string) bool { return isGoFile(p) || isJSFile(p) || isBashF
 func isGoFile(p string) bool      { return strings.HasSuffix(p, ".go") }
 func isJSFile(p string) bool {
 	ext := filepath.Ext(p)
-	return ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx" || ext == ".mjs" || ext == ".cjs"
+	return ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx" || ext == ".mts" || ext == ".cts" || ext == ".mjs" || ext == ".cjs"
 }
 func isBashFile(p string) bool {
 	ext := filepath.Ext(p)
@@ -694,7 +722,25 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 	}
 }
 
-func runJS(res *result, format, diag bool, level string) {
+func runJS(res *result, files []string, format, diag bool, level string) {
+	if diag {
+		root := findWorkspaceRoot(files)
+		issues, summary, err := runTypeScriptDiagnostics(root, files)
+		if err != nil {
+			res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: err.Error()})
+		} else {
+			status := "pass"
+			if len(issues) > 0 {
+				status = "fail"
+			}
+			if summary == "" {
+				summary = fmt.Sprintf("%d diagnostics", len(issues))
+			}
+			res.Commands = append(res.Commands, commandItem{Name: "typescript-language-server", Status: status, Summary: summary})
+			res.Issues = append(res.Issues, issues...)
+		}
+	}
+
 	scripts := packageScripts()
 	if len(scripts) == 0 {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "package.json scripts not found"})

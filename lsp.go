@@ -48,17 +48,63 @@ type publishDiagnosticsParams struct {
 	Diagnostics []lspDiagnostic `json:"diagnostics"`
 }
 
+type lspRunConfig struct {
+	ToolName       string
+	ToolArgs       []string
+	InstallHint    string
+	Root           string
+	Files          []string
+	IssueLanguage  string
+	LanguageIDFunc func(string) string
+}
+
 func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, error) {
-	path, ok := resolveTool(toolDefByName("gopls"))
-	if !ok {
-		return nil, "", fmt.Errorf("gopls not found; install with go install golang.org/x/tools/gopls@latest or set TASTE_GOPLS")
-	}
-	absRoot, err := filepath.Abs(root)
+	return runLSPDiagnostics(lspRunConfig{
+		ToolName:      "gopls",
+		InstallHint:   "go install golang.org/x/tools/gopls@latest",
+		Root:          root,
+		Files:         files,
+		IssueLanguage: "go",
+		LanguageIDFunc: func(string) string {
+			return "go"
+		},
+	})
+}
+
+func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string, error) {
+	return runLSPDiagnostics(lspRunConfig{
+		ToolName:      "typescript-language-server",
+		ToolArgs:      []string{"--stdio"},
+		InstallHint:   "npm install -D typescript-language-server typescript",
+		Root:          root,
+		Files:         files,
+		IssueLanguage: "javascript",
+		LanguageIDFunc: func(file string) string {
+			switch filepath.Ext(file) {
+			case ".ts", ".mts", ".cts":
+				return "typescript"
+			case ".tsx":
+				return "typescriptreact"
+			case ".jsx":
+				return "javascriptreact"
+			default:
+				return "javascript"
+			}
+		},
+	})
+}
+
+func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
+	absRoot, err := filepath.Abs(config.Root)
 	if err != nil {
 		return nil, "", err
 	}
-	absFiles := make([]string, 0, len(files))
-	for _, file := range files {
+	path, ok := resolveToolInDir(toolDefByName(config.ToolName), absRoot)
+	if !ok {
+		return nil, "", fmt.Errorf("%s not found; install with %s or set %s", config.ToolName, config.InstallHint, toolDefByName(config.ToolName).Env)
+	}
+	absFiles := make([]string, 0, len(config.Files))
+	for _, file := range config.Files {
 		abs, err := filepath.Abs(file)
 		if err != nil {
 			return nil, "", err
@@ -66,7 +112,7 @@ func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, erro
 		absFiles = append(absFiles, abs)
 	}
 
-	cmd := exec.Command(path)
+	cmd := exec.Command(path, config.ToolArgs...)
 	cmd.Dir = absRoot
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -125,7 +171,7 @@ func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, erro
 		params := map[string]any{
 			"textDocument": map[string]any{
 				"uri":        uri,
-				"languageId": "go",
+				"languageId": config.LanguageIDFunc(file),
 				"version":    1,
 				"text":       string(data),
 			},
@@ -177,7 +223,7 @@ done:
 		}
 		for _, diag := range diagnostics {
 			issues = append(issues, issueItem{
-				Language: "go",
+				Language: config.IssueLanguage,
 				Severity: lspSeverity(diag.Severity),
 				File:     file,
 				Line:     diag.Range.Start.Line + 1,
@@ -319,7 +365,7 @@ func findWorkspaceRoot(paths []string) string {
 		return "."
 	}
 	for {
-		if fileExists(filepath.Join(abs, "go.mod")) || fileExists(filepath.Join(abs, ".git")) {
+		if fileExists(filepath.Join(abs, "go.mod")) || fileExists(filepath.Join(abs, "package.json")) || fileExists(filepath.Join(abs, "tsconfig.json")) || fileExists(filepath.Join(abs, ".git")) {
 			return abs
 		}
 		parent := filepath.Dir(abs)

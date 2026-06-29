@@ -35,6 +35,30 @@ func TestTasteGoplsDiagnosticsFixture(t *testing.T) {
 	}
 }
 
+func TestTasteTypeScriptDiagnosticsFixture(t *testing.T) {
+	if _, ok := resolveTool(toolDefByName("typescript-language-server")); !ok {
+		t.Skip("typescript-language-server not installed")
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/bad/js/type-error/main.ts", "--json"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 {
+		t.Fatalf("expected failing diagnostics, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
+	}
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "fail" || payload.Level != "easy" {
+		t.Fatalf("unexpected payload status/level: %#v", payload)
+	}
+	if !hasCommand(payload.Commands, "typescript-language-server", "fail") {
+		t.Fatalf("missing failing typescript-language-server command: %#v", payload.Commands)
+	}
+	if !hasIssueCodeContains(payload.Issues, "testdata/bad/js/type-error/main.ts", "2322", "not assignable") {
+		t.Fatalf("missing TypeScript assignability diagnostic: %#v", payload.Issues)
+	}
+}
+
 func hasCommand(commands []commandItem, name, status string) bool {
 	for _, command := range commands {
 		if command.Name == name && command.Status == status {
@@ -47,6 +71,15 @@ func hasCommand(commands []commandItem, name, status string) bool {
 func hasIssue(issues []issueItem, file, code, message string) bool {
 	for _, issue := range issues {
 		if issue.File == file && issue.Code == code && strings.Contains(issue.Message, message) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIssueCodeContains(issues []issueItem, file, codePart, message string) bool {
+	for _, issue := range issues {
+		if issue.File == file && strings.Contains(issue.Code, codePart) && strings.Contains(issue.Message, message) {
 			return true
 		}
 	}
