@@ -30,6 +30,7 @@ taste main.go scripts/dev.sh --fix
 taste . --strict
 taste --changed --strict --json
 taste --flavors
+taste --version
 ```
 
 ## Command shape
@@ -75,7 +76,6 @@ taste --changed --strict --json
 A flavor is one diagnostic/check lane, such as `gopls`, `typescript-language-server`, `bash-language-server`, `go test`, or `shellcheck`.
 
 `taste --flavors` reports which flavors are available from the current working directory. It resolves tools through env overrides, repo-local `node_modules/.bin`, then `PATH`.
-
 
 Common overrides:
 
