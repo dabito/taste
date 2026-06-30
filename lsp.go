@@ -220,7 +220,7 @@ done:
 	_ = waitForResponse(messages, 2, time.Second)
 	_ = writer.notify("exit", nil)
 	_ = stdin.Close()
-	_ = cmd.Wait()
+	_ = waitForProcess(cmd, 2*time.Second)
 	select {
 	case <-readErrs:
 	default:
@@ -353,7 +353,21 @@ func cleanupLSP(cmd *exec.Cmd, stdin io.Closer) {
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
-	_ = cmd.Wait()
+	_ = waitForProcess(cmd, 2*time.Second)
+}
+
+func waitForProcess(cmd *exec.Cmd, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return <-done
+	}
 }
 
 func fileURI(path string) string {

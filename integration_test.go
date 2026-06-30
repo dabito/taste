@@ -80,6 +80,55 @@ func TestTasteBashSyntaxFixture(t *testing.T) {
 	}
 }
 
+func TestTasteStrictGoUsesTargetWorkspace(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/bad/go/failing-test", "--strict", "--json"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 {
+		t.Fatalf("expected failing target-root go test, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
+	}
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCommand(payload.Commands, "go test", "fail") {
+		t.Fatalf("missing target-root go test failure: %#v", payload.Commands)
+	}
+	if !hasIssue(payload.Issues, "", "go test", "target-root go test fixture") {
+		t.Fatalf("missing target-root go test issue: %#v", payload.Issues)
+	}
+}
+
+func TestTasteStrictJSUsesTargetWorkspace(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not installed")
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/bad/js/failing-test/main.js", "--strict", "--json"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 {
+		t.Fatalf("expected failing target-root npm test, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
+	}
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCommand(payload.Commands, "npm run test", "fail") {
+		t.Fatalf("missing target-root npm test failure: %#v", payload.Commands)
+	}
+}
+
+func TestExplicitTestdataTargetIsScanned(t *testing.T) {
+	files, err := targetFiles([]string{"testdata/bad/bash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "testdata/bad/bash/syntax-error/script.sh"
+	for _, file := range files {
+		if file == want {
+			return
+		}
+	}
+	t.Fatalf("explicit testdata target missing %s in %#v", want, files)
+}
 func hasCommand(commands []commandItem, name, status string) bool {
 	for _, command := range commands {
 		if command.Name == name && command.Status == status {

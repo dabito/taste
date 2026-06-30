@@ -550,7 +550,7 @@ func collectFiles(scope string, paths []string) ([]string, error) {
 	case "changed":
 		return gitChangedFiles()
 	case "project":
-		return projectFiles(".")
+		return projectFiles(".", true)
 	default:
 		if len(paths) > 0 {
 			return targetFiles(paths)
@@ -590,7 +590,7 @@ func targetFiles(targets []string) ([]string, error) {
 			continue
 		}
 		if info.IsDir() {
-			found, err := projectFiles(clean)
+			found, err := projectFiles(clean, false)
 			if err != nil {
 				return nil, err
 			}
@@ -615,9 +615,12 @@ func gitChangedFiles() ([]string, error) {
 	return cleanPaths(lines), nil
 }
 
-func projectFiles(root string) ([]string, error) {
+func projectFiles(root string, skipTestdata bool) ([]string, error) {
 	var paths []string
-	skipDirs := map[string]bool{".git": true, "node_modules": true, "dist": true, "build": true, "coverage": true, "vendor": true, "testdata": true}
+	skipDirs := map[string]bool{".git": true, "node_modules": true, "dist": true, "build": true, "coverage": true, "vendor": true}
+	if skipTestdata {
+		skipDirs["testdata"] = true
+	}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -708,12 +711,12 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 			res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gofmt", Message: summary})
 		}
 	}
-	if level == "strict" && fileExists("go.mod") {
+	if level == "strict" && fileExists(filepath.Join(root, "go.mod")) {
 		for _, spec := range []struct {
 			name string
 			args []string
 		}{{"go test", []string{"test", "./..."}}, {"go vet", []string{"vet", "./..."}}} {
-			status, summary := runExternal("go", spec.args...)
+			status, summary := runExternalInDir(root, "go", spec.args...)
 			res.Commands = append(res.Commands, commandItem{Name: spec.name, Status: status, Summary: summary})
 			if status == "fail" {
 				res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: spec.name, Message: summary})
@@ -723,8 +726,8 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 }
 
 func runJS(res *result, files []string, format, diag bool, level string) {
+	root := findWorkspaceRoot(files)
 	if diag {
-		root := findWorkspaceRoot(files)
 		issues, summary, err := runTypeScriptDiagnostics(root, files)
 		if err != nil {
 			res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: err.Error()})
@@ -741,40 +744,40 @@ func runJS(res *result, files []string, format, diag bool, level string) {
 		}
 	}
 
-	scripts := packageScripts()
+	scripts := packageScripts(root)
 	if len(scripts) == 0 {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "package.json scripts not found"})
 		return
 	}
-	if _, ok := resolveTool(toolDefByName("npm")); !ok {
+	if _, ok := resolveToolInDir(toolDefByName("npm"), root); !ok {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm not found; override with TASTE_NPM"})
 		return
 	}
 	if format {
-		runNPMScript(res, scripts, "format", true)
+		runNPMScript(res, root, scripts, "format", true)
 	}
 	if diag {
-		runNPMScript(res, scripts, "lint", true)
+		runNPMScript(res, root, scripts, "lint", true)
 		if level == "strict" {
-			runNPMScript(res, scripts, "test", true)
+			runNPMScript(res, root, scripts, "test", true)
 		}
 	}
 }
 
-func runNPMScript(res *result, scripts map[string]bool, script string, issueOnFail bool) {
+func runNPMScript(res *result, dir string, scripts map[string]bool, script string, issueOnFail bool) {
 	if !scripts[script] {
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm script missing: " + script})
 		return
 	}
-	status, summary := runExternal("npm", "run", script)
+	status, summary := runExternalInDir(dir, "npm", "run", script)
 	res.Commands = append(res.Commands, commandItem{Name: "npm run " + script, Status: status, Summary: summary})
 	if status == "fail" && issueOnFail {
 		res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: "npm run " + script, Message: summary})
 	}
 }
 
-func packageScripts() map[string]bool {
-	data, err := os.ReadFile("package.json")
+func packageScripts(dir string) map[string]bool {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
 		return nil
 	}
@@ -837,11 +840,16 @@ func runBash(res *result, files []string, format, diag bool, level string) {
 }
 
 func runExternal(name string, args ...string) (string, string) {
-	path, ok := resolveTool(toolDefByName(name))
+	return runExternalInDir(".", name, args...)
+}
+
+func runExternalInDir(dir, name string, args ...string) (string, string) {
+	path, ok := resolveToolInDir(toolDefByName(name), dir)
 	if !ok {
 		return "fail", fmt.Sprintf("%s not found; override with %s", name, toolDefByName(name).Env)
 	}
 	cmd := exec.Command(path, args...)
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	summary := summarizeOutput(out)
 	if err != nil {
