@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.0-beta.2
 
 - Add JSON `schema_version` and `total_issues` fields.
 - Add `--max-issues` to cap JSON issues while preserving pre-cap count.
@@ -8,6 +8,8 @@
 - Define `--changed` as staged+unstaged tracked changes vs `HEAD`, plus untracked supported files.
 - Reject `--project --fix` in v0 to avoid unbounded mass mutation.
 - Document JSON stdout discipline and exit codes.
+
+## v0.1.0-beta.1
 
 Initial public beta candidate.
 

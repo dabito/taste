@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-const version = "0.1.0-beta.1"
+const version = "0.1.0-beta.2"
 
 const defaultMaxIssues = 200
 
