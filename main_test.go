@@ -92,15 +92,52 @@ func TestFlavorsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Status != "ok" || len(payload.Checks) == 0 {
+	if payload.SchemaVersion != 1 || payload.Status != "ok" || len(payload.Checks) == 0 {
 		t.Fatalf("unexpected flavors payload: %#v", payload)
 	}
 }
 
+func TestParseArgsSeparatorAndMaxIssues(t *testing.T) {
+	opts, err := parseArgs([]string{"--json", "--max-issues", "3", "--", "-flaggy.go"}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.JSONOut || opts.MaxIssues != 3 || opts.Scope != "paths" || len(opts.Paths) != 1 || opts.Paths[0] != "-flaggy.go" {
+		t.Fatalf("unexpected opts: %#v", opts)
+	}
+
+	opts, err = parseArgs([]string{"--max-issues=7", "main.go"}, strings.NewReader(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.MaxIssues != 7 {
+		t.Fatalf("unexpected max issues: %#v", opts)
+	}
+}
+
+func TestParseArgsRejectProjectFix(t *testing.T) {
+	if _, err := parseArgs([]string{"--project", "--fix"}, strings.NewReader("")); err == nil {
+		t.Fatal("expected --project --fix rejection")
+	}
+}
+
+func TestFinalizeCapsIssuesAndSetsSchema(t *testing.T) {
+	res := finalize(result{SchemaVersion: 1, Issues: []issueItem{
+		{Severity: "warning", File: "b.go", Message: "warn"},
+		{Severity: "error", File: "a.go", Message: "err 1"},
+		{Severity: "error", File: "c.go", Message: "err 2"},
+	}}, 2)
+	if res.SchemaVersion != 1 || res.Status != "fail" || res.TotalIssues != 3 || len(res.Issues) != 2 {
+		t.Fatalf("unexpected capped result: %#v", res)
+	}
+	if res.Issues[0].File != "a.go" || res.Issues[1].File != "c.go" {
+		t.Fatalf("issues not sorted before cap: %#v", res.Issues)
+	}
+}
 func TestChecksHeader(t *testing.T) {
 	groups := fileGroups{Go: []string{"main.go"}}
 	checks := checksForGroups(groups)
-	res := finalize(result{Checks: checks})
+	res := finalize(result{SchemaVersion: 1, Checks: checks}, defaultMaxIssues)
 	if !strings.Contains(res.Header, "gofmt") || !strings.HasPrefix(res.Header, "checks:") {
 		t.Fatalf("unexpected header: %q", res.Header)
 	}

@@ -241,6 +241,7 @@ done:
 				File:     file,
 				Line:     diag.Range.Start.Line + 1,
 				Code:     lspCode(diag),
+				Source:   diag.Source,
 				Message:  diag.Message,
 			})
 		}

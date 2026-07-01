@@ -36,22 +36,23 @@ taste --version
 ## Command shape
 
 ```text
-taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
+taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--max-issues N]
 ```
 
-Targets are files or directories. Multiple targets allowed. No targets defaults to `--changed` inside a git repo, otherwise `--project` with a warning.
+Targets are files or directories. Multiple targets allowed. Use `--` before targets that begin with `-`. No targets defaults to `--changed` inside a git repo, otherwise `--project` with a warning.
 
 Flags:
 
 ```text
---fix        safe autofix, then diagnostics
---dry        diagnostics only; default
---easy       fast/local checks; default
---strict     complete readiness checks
---changed    changed files from git
---project    whole project
---flavors    list diagnostic/check flavors, paths, env overrides, install hints
---stdin-json  read {"paths":[...]} from stdin
+--fix             safe autofix, then diagnostics
+--dry             diagnostics only; default
+--easy            fast/local checks; default
+--strict          complete readiness checks
+--changed         staged+unstaged tracked changes vs HEAD, plus untracked supported files
+--project         whole project
+--flavors         list diagnostic/check flavors, paths, env overrides, install hints
+--stdin-json      read {"paths":[...]} from stdin
+--max-issues N    cap JSON issues; default 200
 ```
 
 Go diagnostics use `gopls` when available. JS/TS diagnostics use `typescript-language-server` when available. Bash diagnostics use `bash-language-server` when available. Missing LSPs are warnings with install/override hints; shell/project checks still run.
@@ -70,6 +71,17 @@ JSON output is stable for agents:
 ```bash
 taste --changed --strict --json
 ```
+
+With `--json`, stdout is exactly one JSON document. Human logs/errors go to stderr. Exit codes:
+
+```text
+0  pass
+1  diagnostic issues found
+2  usage/config error
+3+ internal error
+```
+
+The JSON includes `schema_version`, `status`, `scope`, `level`, `summary`, `checks`, `fixed`, `issues`, `total_issues`, `warnings`, and `commands`. `--max-issues` caps `issues`; `total_issues` reports the pre-cap count.
 
 ## Flavors
 

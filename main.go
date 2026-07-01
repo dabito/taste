@@ -10,10 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const version = "0.1.0-beta.1"
+
+const defaultMaxIssues = 200
 
 type fixedItem struct {
 	Language string `json:"language"`
@@ -27,12 +30,16 @@ type issueItem struct {
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Code     string `json:"code,omitempty"`
+	Source   string `json:"source,omitempty"`
 	Message  string `json:"message"`
 }
 
 type warningItem struct {
-	Language string `json:"language,omitempty"`
-	Message  string `json:"message"`
+	Tool        string `json:"tool,omitempty"`
+	Language    string `json:"language,omitempty"`
+	Message     string `json:"message"`
+	Install     string `json:"install,omitempty"`
+	EnvOverride string `json:"env_override,omitempty"`
 }
 
 type commandItem struct {
@@ -51,22 +58,25 @@ type checkItem struct {
 }
 
 type result struct {
-	Status   string        `json:"status"`
-	Scope    string        `json:"scope"`
-	Summary  string        `json:"summary"`
-	Level    string        `json:"level"`
-	Header   string        `json:"header"`
-	Checks   []checkItem   `json:"checks"`
-	Fixed    []fixedItem   `json:"fixed"`
-	Issues   []issueItem   `json:"issues"`
-	Warnings []warningItem `json:"warnings"`
-	Commands []commandItem `json:"commands"`
+	SchemaVersion int           `json:"schema_version"`
+	Status        string        `json:"status"`
+	Scope         string        `json:"scope"`
+	Summary       string        `json:"summary"`
+	Level         string        `json:"level"`
+	Header        string        `json:"header"`
+	Checks        []checkItem   `json:"checks"`
+	Fixed         []fixedItem   `json:"fixed"`
+	Issues        []issueItem   `json:"issues"`
+	TotalIssues   int           `json:"total_issues"`
+	Warnings      []warningItem `json:"warnings"`
+	Commands      []commandItem `json:"commands"`
 }
 
 type flavorsResult struct {
-	Status  string      `json:"status"`
-	Summary string      `json:"summary"`
-	Checks  []checkItem `json:"checks"`
+	SchemaVersion int         `json:"schema_version"`
+	Status        string      `json:"status"`
+	Summary       string      `json:"summary"`
+	Checks        []checkItem `json:"checks"`
 }
 
 type options struct {
@@ -76,6 +86,7 @@ type options struct {
 	JSONOut     bool
 	Level       string
 	ShowFlavors bool
+	MaxIssues   int
 }
 
 type stdinPayload struct {
@@ -107,15 +118,17 @@ func usage() {
 Targets:
   files or directories; multiple allowed
   no targets defaults to changed files in git, else project
+  use -- before targets that begin with -
 
 Flags:
-  --fix        safe autofix, then diagnostics
-  --dry        diagnostics only; default
-  --easy       fast/local checks; default
-  --strict     complete readiness checks
-  --changed    changed files from git
-  --project    whole project
-  --flavors    list available diagnostic/check flavors
+  --fix                 safe autofix, then diagnostics
+  --dry                 diagnostics only; default
+  --easy                fast/local checks; default
+  --strict              complete readiness checks
+  --changed             changed files from git: staged+unstaged vs HEAD, plus untracked supported files
+  --project             whole project
+  --flavors             list available diagnostic/check flavors
+  --max-issues <n>      cap JSON issues; default 200
 
 Examples:
   taste main.go
@@ -177,15 +190,17 @@ func usageTo(w io.Writer) {
 Targets:
   files or directories; multiple allowed
   no targets defaults to changed files in git, else project
+  use -- before targets that begin with -
 
 Flags:
-  --fix        safe autofix, then diagnostics
-  --dry        diagnostics only; default
-  --easy       fast/local checks; default
-  --strict     complete readiness checks
-  --changed    changed files from git
-  --project    whole project
-  --flavors    list available diagnostic/check flavors
+  --fix                 safe autofix, then diagnostics
+  --dry                 diagnostics only; default
+  --easy                fast/local checks; default
+  --strict              complete readiness checks
+  --changed             changed files from git: staged+unstaged vs HEAD, plus untracked supported files
+  --project             whole project
+  --flavors             list available diagnostic/check flavors
+  --max-issues <n>      cap JSON issues; default 200
 
 Examples:
   taste main.go
@@ -195,32 +210,53 @@ Examples:
 }
 
 func parseArgs(args []string, stdin io.Reader) (options, error) {
-	opts := options{Intent: "check", Level: "easy"}
-	for _, arg := range args {
-		switch arg {
-		case "--json":
+	opts := options{Intent: "check", Level: "easy", MaxIssues: defaultMaxIssues}
+	afterSeparator := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if afterSeparator {
+			if opts.Scope == "changed" || opts.Scope == "project" || opts.Scope == "stdin-json" {
+				return options{}, cliError("targets cannot be combined with " + opts.Scope + " scope")
+			}
+			opts.Scope = "paths"
+			opts.Paths = append(opts.Paths, arg)
+			continue
+		}
+		switch {
+		case arg == "--":
+			afterSeparator = true
+		case arg == "--json":
 			opts.JSONOut = true
-		case "--easy":
+		case arg == "--easy":
 			opts.Level = "easy"
-		case "--strict":
+		case arg == "--strict":
 			opts.Level = "strict"
-		case "--fix":
+		case arg == "--fix":
 			opts.Intent = "fix"
-		case "--dry":
+		case arg == "--dry":
 			opts.Intent = "check"
-		case "--changed":
+		case arg == "--changed":
 			if len(opts.Paths) > 0 {
 				return options{}, cliError("--changed cannot be combined with targets")
 			}
+			if opts.Scope == "project" || opts.Scope == "stdin-json" {
+				return options{}, cliError("--changed cannot be combined with " + opts.Scope)
+			}
 			opts.Scope = "changed"
-		case "--project":
+		case arg == "--project":
 			if len(opts.Paths) > 0 {
 				return options{}, cliError("--project cannot be combined with targets")
 			}
+			if opts.Scope == "changed" || opts.Scope == "stdin-json" {
+				return options{}, cliError("--project cannot be combined with " + opts.Scope)
+			}
 			opts.Scope = "project"
-		case "--stdin-json":
+		case arg == "--stdin-json":
 			if len(opts.Paths) > 0 {
 				return options{}, cliError("--stdin-json cannot be combined with targets")
+			}
+			if opts.Scope == "changed" || opts.Scope == "project" {
+				return options{}, cliError("--stdin-json cannot be combined with " + opts.Scope)
 			}
 			opts.Scope = "stdin-json"
 			payload, err := readStdinPayload(stdin)
@@ -231,12 +267,27 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 				opts.Scope = payload.Scope
 			}
 			opts.Paths = append(opts.Paths, payload.Paths...)
-		case "--flavors":
+		case arg == "--flavors":
 			opts.ShowFlavors = true
-		default:
-			if strings.HasPrefix(arg, "--") {
-				return options{}, cliError("unknown flag: " + arg)
+		case arg == "--max-issues":
+			if i+1 >= len(args) {
+				return options{}, cliError("--max-issues needs a value")
 			}
+			i++
+			value, err := parseMaxIssues(args[i])
+			if err != nil {
+				return options{}, err
+			}
+			opts.MaxIssues = value
+		case strings.HasPrefix(arg, "--max-issues="):
+			value, err := parseMaxIssues(strings.TrimPrefix(arg, "--max-issues="))
+			if err != nil {
+				return options{}, err
+			}
+			opts.MaxIssues = value
+		case strings.HasPrefix(arg, "--"):
+			return options{}, cliError("unknown flag: " + arg)
+		default:
 			if opts.Scope == "changed" || opts.Scope == "project" || opts.Scope == "stdin-json" {
 				return options{}, cliError("targets cannot be combined with " + opts.Scope + " scope")
 			}
@@ -247,7 +298,18 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 	if opts.Level != "easy" && opts.Level != "strict" {
 		return options{}, cliError("unknown level: " + opts.Level)
 	}
+	if opts.Intent == "fix" && opts.Scope == "project" {
+		return options{}, cliError("--project cannot be combined with --fix in v0; pass explicit targets or use --changed --fix")
+	}
 	return opts, nil
+}
+
+func parseMaxIssues(raw string) (int, error) {
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 || value > 10000 {
+		return 0, cliError("--max-issues must be an integer between 1 and 10000")
+	}
+	return value, nil
 }
 
 func readStdinPayload(r io.Reader) (stdinPayload, error) {
@@ -283,7 +345,7 @@ func runFlavors() flavorsResult {
 			available++
 		}
 	}
-	return flavorsResult{Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
+	return flavorsResult{SchemaVersion: 1, Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
 }
 
 func printFlavorsHuman(w io.Writer, res flavorsResult) {
@@ -430,7 +492,7 @@ func toolDefByName(name string) toolDef {
 	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
 }
 func runTaste(opts options) result {
-	res := result{Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
+	res := result{SchemaVersion: 1, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
 	if res.Level == "" {
 		res.Level = "easy"
 	}
@@ -447,7 +509,7 @@ func runTaste(opts options) result {
 	paths, err := collectFiles(res.Scope, opts.Paths)
 	if err != nil {
 		res.Issues = append(res.Issues, issueItem{Severity: "error", Message: err.Error()})
-		return finalize(res)
+		return finalize(res, opts.MaxIssues)
 	}
 	groups := classifyFiles(paths)
 	res.Checks = checksForGroups(groups)
@@ -467,19 +529,91 @@ func runTaste(opts options) result {
 	if len(paths) == 0 || (len(groups.Go) == 0 && len(groups.JS) == 0 && len(groups.Bash) == 0) {
 		res.Warnings = append(res.Warnings, warningItem{Message: "no supported source files matched scope"})
 	}
-	return finalize(res)
+	return finalize(res, opts.MaxIssues)
 }
 
-func finalize(res result) result {
+func finalize(res result, maxIssues int) result {
+	res = ensureResultSlices(res)
 	res.Header = checksHeader(res)
-	if len(res.Issues) == 0 {
+	res.Issues = ensureIssues(sortIssues(res.Issues))
+	res.TotalIssues = len(res.Issues)
+	if maxIssues <= 0 {
+		maxIssues = defaultMaxIssues
+	}
+	if len(res.Issues) > maxIssues {
+		res.Issues = res.Issues[:maxIssues]
+	}
+	if res.TotalIssues == 0 {
 		res.Status = "pass"
 		res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
 		return res
 	}
 	res.Status = "fail"
-	res.Summary = fmt.Sprintf("FAIL %d issues, %d warnings", len(res.Issues), len(res.Warnings))
+	res.Summary = fmt.Sprintf("FAIL %d issues, %d warnings", res.TotalIssues, len(res.Warnings))
 	return res
+}
+func ensureResultSlices(res result) result {
+	if res.Checks == nil {
+		res.Checks = []checkItem{}
+	}
+	if res.Fixed == nil {
+		res.Fixed = []fixedItem{}
+	}
+	res.Issues = ensureIssues(res.Issues)
+	if res.Warnings == nil {
+		res.Warnings = []warningItem{}
+	}
+	if res.Commands == nil {
+		res.Commands = []commandItem{}
+	}
+	return res
+}
+
+func ensureIssues(issues []issueItem) []issueItem {
+	if issues == nil {
+		return []issueItem{}
+	}
+	return issues
+}
+
+func sortIssues(issues []issueItem) []issueItem {
+	out := append([]issueItem(nil), issues...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if severityRank(out[i].Severity) != severityRank(out[j].Severity) {
+			return severityRank(out[i].Severity) < severityRank(out[j].Severity)
+		}
+		if out[i].File != out[j].File {
+			return out[i].File < out[j].File
+		}
+		if lineRank(out[i].Line) != lineRank(out[j].Line) {
+			return lineRank(out[i].Line) < lineRank(out[j].Line)
+		}
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		if out[i].Code != out[j].Code {
+			return out[i].Code < out[j].Code
+		}
+		return out[i].Message < out[j].Message
+	})
+	return out
+}
+
+func severityRank(severity string) int {
+	if severity == "error" {
+		return 0
+	}
+	if severity == "warning" {
+		return 1
+	}
+	return 2
+}
+
+func lineRank(line int) int {
+	if line == 0 {
+		return int(^uint(0) >> 1)
+	}
+	return line
 }
 
 func checksHeader(res result) string {
@@ -603,16 +737,48 @@ func targetFiles(targets []string) ([]string, error) {
 }
 
 func gitChangedFiles() ([]string, error) {
+	tracked, err := gitChangedTrackedFiles()
+	if err != nil {
+		return nil, err
+	}
+	untracked, err := gitUntrackedFiles()
+	if err != nil {
+		return nil, err
+	}
+	return cleanPaths(append(tracked, untracked...)), nil
+}
+
+func gitChangedTrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, errors.New("git changed-file detection failed")
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return []string{}, nil
+	return splitGitFileList(out), nil
+}
+
+func gitUntrackedFiles() ([]string, error) {
+	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, errors.New("git untracked-file detection failed")
 	}
-	return cleanPaths(lines), nil
+	files := splitGitFileList(out)
+	filtered := files[:0]
+	for _, file := range files {
+		if isKnownSource(file) {
+			filtered = append(filtered, file)
+		}
+	}
+	return filtered, nil
+}
+
+func splitGitFileList(out []byte) []string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return []string{}
+	}
+	return strings.Split(text, "\n")
 }
 
 func projectFiles(root string, skipTestdata bool) ([]string, error) {
