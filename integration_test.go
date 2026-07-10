@@ -106,7 +106,7 @@ func TestTasteStrictJSUsesTargetWorkspace(t *testing.T) {
 		t.Skip("typescript-language-server not installed")
 	}
 	var out, errOut bytes.Buffer
-	code := run([]string{"testdata/bad/js/failing-test/main.js", "--strict", "--json"}, strings.NewReader(""), &out, &errOut)
+	code := run([]string{"testdata/bad/js/failing-test/main.js", "--strict", "--allow-scripts", "--json"}, strings.NewReader(""), &out, &errOut)
 	if code != 1 {
 		t.Fatalf("expected failing target-root npm test, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
 	}
@@ -116,6 +116,30 @@ func TestTasteStrictJSUsesTargetWorkspace(t *testing.T) {
 	}
 	if !hasCommand(payload.Commands, "npm run test", "fail") {
 		t.Fatalf("missing target-root npm test failure: %#v", payload.Commands)
+	}
+}
+
+func TestTasteJSScriptsGatedByDefault(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not installed")
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/bad/js/failing-test/main.js", "--strict", "--json"}, strings.NewReader(""), &out, &errOut)
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON, code=%d stderr=%s stdout=%s err=%v", code, errOut.String(), out.String(), err)
+	}
+	if !hasCommand(payload.Commands, "npm run test", "skip") {
+		t.Fatalf("expected npm run test withheld by default without --allow-scripts: %#v", payload.Commands)
+	}
+	found := false
+	for _, w := range payload.Warnings {
+		if strings.Contains(w.Message, "allow-scripts") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a warning explaining how to allow the withheld script: %#v", payload.Warnings)
 	}
 }
 

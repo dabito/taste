@@ -56,6 +56,7 @@ type lspRunConfig struct {
 	Files          []string
 	IssueLanguage  string
 	LanguageIDFunc func(string) string
+	InitOptions    map[string]any
 }
 
 func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, error) {
@@ -72,9 +73,14 @@ func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, erro
 }
 
 func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string, error) {
+	var initOptions map[string]any
+	if tsserverPath, ok := resolveTsserverPath(root); ok {
+		initOptions = map[string]any{"tsserver": map[string]any{"path": tsserverPath}}
+	}
 	return runLSPDiagnostics(lspRunConfig{
 		ToolName:      "typescript-language-server",
 		ToolArgs:      []string{"--stdio"},
+		InitOptions:   initOptions,
 		InstallHint:   "npm install -D typescript-language-server typescript",
 		Root:          root,
 		Files:         files,
@@ -92,6 +98,31 @@ func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string,
 			}
 		},
 	})
+}
+
+// resolveTsserverPath finds a tsserver.js typescript-language-server can use,
+// even when the target workspace has no local `typescript` devDependency.
+// Prefers a workspace-local install (so the project's own TS version wins),
+// then falls back to a global npm install, then an explicit override.
+func resolveTsserverPath(root string) (string, bool) {
+	if override := os.Getenv("TASTE_TSSERVER_PATH"); override != "" {
+		if fileExists(override) {
+			return override, true
+		}
+		return "", false
+	}
+	if local := filepath.Join(root, "node_modules", "typescript", "lib", "tsserver.js"); fileExists(local) {
+		return local, true
+	}
+	out, err := exec.Command("npm", "root", "-g").Output()
+	if err != nil {
+		return "", false
+	}
+	global := filepath.Join(strings.TrimSpace(string(out)), "typescript", "lib", "tsserver.js")
+	if fileExists(global) {
+		return global, true
+	}
+	return "", false
 }
 
 func runBashLanguageDiagnostics(root string, files []string) ([]issueItem, string, error) {
@@ -158,6 +189,9 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 			},
 		},
 		"workspaceFolders": []map[string]string{{"uri": rootURI, "name": filepath.Base(absRoot)}},
+	}
+	if config.InitOptions != nil {
+		initParams["initializationOptions"] = config.InitOptions
 	}
 	if err := writer.request(1, "initialize", initParams); err != nil {
 		cleanupLSP(cmd, stdin)
