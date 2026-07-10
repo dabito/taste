@@ -112,6 +112,26 @@ type cliError string
 
 func (e cliError) Error() string { return string(e) }
 
+// gitStateError signals a git invocation failed not due to a missing tool or
+// filesystem problem, but due to an edge case of repo state (e.g. detached
+// HEAD with no commits yet). Callers can treat it as "not actionable" and
+// fall back rather than surfacing an opaque error.
+type gitStateError struct{ inner error }
+
+func (e *gitStateError) Error() string {
+	if e.inner == nil {
+		return "git state error"
+	}
+	return e.inner.Error()
+}
+
+func (e *gitStateError) Unwrap() error { return e.inner }
+
+func isGitStateError(err error) bool {
+	var gse *gitStateError
+	return errors.As(err, &gse)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
 
@@ -492,6 +512,7 @@ func toolDefByName(name string) toolDef {
 	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
 }
 func runTaste(opts options) result {
+	scopeWasImplicit := opts.Scope == ""
 	res := result{SchemaVersion: 1, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
 	if res.Level == "" {
 		res.Level = "easy"
@@ -507,6 +528,19 @@ func runTaste(opts options) result {
 	}
 
 	paths, err := collectFiles(res.Scope, opts.Paths)
+	if err != nil {
+		// A changed-files run can fail purely due to repo state (e.g. detached
+		// HEAD with no commits yet). Only fall back to --project when the
+		// scope was implicit (mirroring the not-in-git-repo path); an
+		// explicit --changed that can't resolve should surface as a clear
+		// error rather than silently widening scope the user deliberately
+		// narrowed.
+		if scopeWasImplicit && res.Scope == "changed" && isGitStateError(err) {
+			res.Warnings = append(res.Warnings, warningItem{Message: "git changed-file detection failed (" + err.Error() + "); defaulted to --project"})
+			res.Scope = "project"
+			paths, err = collectFiles(res.Scope, opts.Paths)
+		}
+	}
 	if err != nil {
 		res.Issues = append(res.Issues, issueItem{Severity: "error", Message: err.Error()})
 		return finalize(res, opts.MaxIssues)
@@ -752,7 +786,7 @@ func gitChangedTrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("git changed-file detection failed")
+		return nil, &gitStateError{inner: fmt.Errorf("git changed-file detection failed: %w", err)}
 	}
 	return splitGitFileList(out), nil
 }
@@ -761,7 +795,7 @@ func gitUntrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, errors.New("git untracked-file detection failed")
+		return nil, &gitStateError{inner: fmt.Errorf("git untracked-file detection failed: %w", err)}
 	}
 	files := splitGitFileList(out)
 	filtered := files[:0]
@@ -855,6 +889,7 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 	issues, summary, err := runGoplsDiagnostics(root, files)
 	if err != nil {
 		res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: err.Error()})
+		res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gopls", Message: "required go diagnostic tool failed: " + err.Error()})
 	} else {
 		status := "pass"
 		if len(issues) > 0 {
@@ -897,6 +932,7 @@ func runJS(res *result, files []string, format, diag bool, level string) {
 		issues, summary, err := runTypeScriptDiagnostics(root, files)
 		if err != nil {
 			res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: err.Error()})
+			res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: "typescript-language-server", Message: "required javascript diagnostic tool failed: " + err.Error()})
 		} else {
 			status := "pass"
 			if len(issues) > 0 {
@@ -971,6 +1007,7 @@ func runBash(res *result, files []string, format, diag bool, level string) {
 	issues, summary, err := runBashLanguageDiagnostics(root, files)
 	if err != nil {
 		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: err.Error()})
+		res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", Code: "bash-language-server", Message: "required bash diagnostic tool failed: " + err.Error()})
 	} else {
 		status := "pass"
 		if len(issues) > 0 {
