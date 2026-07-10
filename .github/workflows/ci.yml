@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: go install golang.org/x/tools/gopls@latest
+      - run: npm install -g typescript-language-server typescript bash-language-server
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install shellcheck
+      - run: go install mvdan.cc/sh/v3/cmd/shfmt@latest
+      - run: go build ./...
+      - run: |
+          set -o pipefail
+          go test -v ./... | tee test.log
+          ! grep -q '^--- SKIP:' test.log
