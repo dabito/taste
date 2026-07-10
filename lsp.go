@@ -197,6 +197,7 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 
 	diagByURI := map[string][]lspDiagnostic{}
 	deadline := time.After(3 * time.Second)
+	timedOut := false
 	for len(diagByURI) < len(wanted) {
 		select {
 		case msg := <-messages:
@@ -211,11 +212,10 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 				diagByURI[params.URI] = params.Diagnostics
 			}
 		case <-deadline:
-			goto done
+			timedOut = true
 		}
 	}
 
-done:
 	_ = writer.request(2, "shutdown", nil)
 	_ = waitForResponse(messages, 2, time.Second)
 	_ = writer.notify("exit", nil)
@@ -224,6 +224,11 @@ done:
 	select {
 	case <-readErrs:
 	default:
+	}
+
+	if timedOut && len(diagByURI) < len(wanted) {
+		missing := len(wanted) - len(diagByURI)
+		return nil, strings.TrimSpace(stderr.String()), fmt.Errorf("lsp diagnostics deadline hit before all files reported: %d/%d files received (missing %d)", len(diagByURI), len(wanted), missing)
 	}
 
 	issues := make([]issueItem, 0)
