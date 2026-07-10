@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -74,8 +75,14 @@ func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, erro
 
 func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string, error) {
 	var initOptions map[string]any
-	if tsserverPath, ok := resolveTsserverPath(root); ok {
-		initOptions = map[string]any{"tsserver": map[string]any{"path": tsserverPath}}
+	// Gate the tsserver-path resolution (which can shell out to npm) behind
+	// the same existence check runLSPDiagnostics does for the LSP tool
+	// itself, so a missing typescript-language-server fails fast instead of
+	// paying for resolution work that will be discarded anyway.
+	if _, ok := resolveToolInDir(toolDefByName("typescript-language-server"), root); ok {
+		if tsserverPath, ok := resolveTsserverPath(root); ok {
+			initOptions = map[string]any{"tsserver": map[string]any{"path": tsserverPath}}
+		}
 	}
 	return runLSPDiagnostics(lspRunConfig{
 		ToolName:      "typescript-language-server",
@@ -102,8 +109,10 @@ func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string,
 
 // resolveTsserverPath finds a tsserver.js typescript-language-server can use,
 // even when the target workspace has no local `typescript` devDependency.
-// Prefers a workspace-local install (so the project's own TS version wins),
-// then falls back to a global npm install, then an explicit override.
+// Prefers a workspace-local install (walking up, same as findLocalNPMBinFrom,
+// so a hoisted monorepo install still resolves and the project's own TS
+// version wins), then falls back to a global npm install, then an explicit
+// override.
 func resolveTsserverPath(root string) (string, bool) {
 	if override := os.Getenv("TASTE_TSSERVER_PATH"); override != "" {
 		if fileExists(override) {
@@ -111,10 +120,24 @@ func resolveTsserverPath(root string) (string, bool) {
 		}
 		return "", false
 	}
-	if local := filepath.Join(root, "node_modules", "typescript", "lib", "tsserver.js"); fileExists(local) {
-		return local, true
+	dir := root
+	for {
+		if local := filepath.Join(dir, "node_modules", "typescript", "lib", "tsserver.js"); fileExists(local) {
+			return local, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
-	out, err := exec.Command("npm", "root", "-g").Output()
+	npmPath, ok := resolveToolInDir(toolDefByName("npm"), root)
+	if !ok {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, npmPath, "root", "-g").Output()
 	if err != nil {
 		return "", false
 	}
@@ -232,6 +255,7 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 	diagByURI := map[string][]lspDiagnostic{}
 	deadline := time.After(3 * time.Second)
 	timedOut := false
+waitLoop:
 	for len(diagByURI) < len(wanted) {
 		select {
 		case msg := <-messages:
@@ -247,6 +271,7 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 			}
 		case <-deadline:
 			timedOut = true
+			break waitLoop
 		}
 	}
 
