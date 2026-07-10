@@ -80,13 +80,14 @@ type flavorsResult struct {
 }
 
 type options struct {
-	Intent      string
-	Scope       string
-	Paths       []string
-	JSONOut     bool
-	Level       string
-	ShowFlavors bool
-	MaxIssues   int
+	Intent       string
+	Scope        string
+	Paths        []string
+	JSONOut      bool
+	Level        string
+	ShowFlavors  bool
+	AllowScripts bool
+	MaxIssues    int
 }
 
 type stdinPayload struct {
@@ -113,7 +114,7 @@ type cliError string
 func (e cliError) Error() string { return string(e) }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
+	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--allow-scripts]
 
 Targets:
   files or directories; multiple allowed
@@ -128,6 +129,33 @@ Flags:
   --changed             changed files from git: staged+unstaged vs HEAD, plus untracked supported files
   --project             whole project
   --flavors             list available diagnostic/check flavors
+  --allow-scripts       allow npm run <script> execution from repo package.json
+  --max-issues <n>      cap JSON issues; default 200
+
+Examples:
+  taste main.go
+  taste main.go scripts/dev.sh --fix
+  taste . --strict
+  taste --changed --strict --json`)
+}
+
+func usageTo(w io.Writer) {
+	fmt.Fprintln(w, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--allow-scripts]
+
+Targets:
+  files or directories; multiple allowed
+  no targets defaults to changed files in git, else project
+  use -- before targets that begin with -
+
+Flags:
+  --fix                 safe autofix, then diagnostics
+  --dry                 diagnostics only; default
+  --easy                fast/local checks; default
+  --strict              complete readiness checks
+  --changed             changed files from git: staged+unstaged vs HEAD, plus untracked supported files
+  --project             whole project
+  --flavors             list available diagnostic/check flavors
+  --allow-scripts       allow npm run <script> execution from repo package.json
   --max-issues <n>      cap JSON issues; default 200
 
 Examples:
@@ -184,33 +212,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json]
-
-Targets:
-  files or directories; multiple allowed
-  no targets defaults to changed files in git, else project
-  use -- before targets that begin with -
-
-Flags:
-  --fix                 safe autofix, then diagnostics
-  --dry                 diagnostics only; default
-  --easy                fast/local checks; default
-  --strict              complete readiness checks
-  --changed             changed files from git: staged+unstaged vs HEAD, plus untracked supported files
-  --project             whole project
-  --flavors             list available diagnostic/check flavors
-  --max-issues <n>      cap JSON issues; default 200
-
-Examples:
-  taste main.go
-  taste main.go scripts/dev.sh --fix
-  taste . --strict
-  taste --changed --strict --json`)
-}
-
 func parseArgs(args []string, stdin io.Reader) (options, error) {
 	opts := options{Intent: "check", Level: "easy", MaxIssues: defaultMaxIssues}
+	if truthyEnv(os.Getenv("TASTE_ALLOW_SCRIPTS")) {
+		opts.AllowScripts = true
+	}
 	afterSeparator := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -235,6 +241,10 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 			opts.Intent = "fix"
 		case arg == "--dry":
 			opts.Intent = "check"
+		case arg == "--allow-scripts":
+			opts.AllowScripts = true
+		case strings.HasPrefix(arg, "--allow-scripts="):
+			opts.AllowScripts = truthyArg(strings.TrimPrefix(arg, "--allow-scripts="))
 		case arg == "--changed":
 			if len(opts.Paths) > 0 {
 				return options{}, cliError("--changed cannot be combined with targets")
@@ -311,6 +321,17 @@ func parseMaxIssues(raw string) (int, error) {
 	}
 	return value, nil
 }
+
+func truthyEnv(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func truthyArg(raw string) bool { return truthyEnv(raw) }
 
 func readStdinPayload(r io.Reader) (stdinPayload, error) {
 	var payload stdinPayload
@@ -521,7 +542,7 @@ func runTaste(opts options) result {
 		runGo(&res, groups.Go, format, diag, res.Level)
 	}
 	if len(groups.JS) > 0 {
-		runJS(&res, groups.JS, format, diag, res.Level)
+		runJS(&res, groups.JS, format, diag, res.Level, opts.AllowScripts)
 	}
 	if len(groups.Bash) > 0 {
 		runBash(&res, groups.Bash, format, diag, res.Level)
@@ -891,7 +912,8 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 	}
 }
 
-func runJS(res *result, files []string, format, diag bool, level string) {
+func runJS(res *result, files []string, format, diag bool, level string, allowScripts bool) {
+
 	root := findWorkspaceRoot(files)
 	if diag {
 		issues, summary, err := runTypeScriptDiagnostics(root, files)
@@ -920,25 +942,32 @@ func runJS(res *result, files []string, format, diag bool, level string) {
 		return
 	}
 	if format {
-		runNPMScript(res, root, scripts, "format", true)
+		runNPMScript(res, root, scripts, "format", true, allowScripts)
 	}
 	if diag {
-		runNPMScript(res, root, scripts, "lint", true)
+		runNPMScript(res, root, scripts, "lint", true, allowScripts)
 		if level == "strict" {
-			runNPMScript(res, root, scripts, "test", true)
+			runNPMScript(res, root, scripts, "test", true, allowScripts)
 		}
 	}
 }
 
-func runNPMScript(res *result, dir string, scripts map[string]bool, script string, issueOnFail bool) {
+func runNPMScript(res *result, dir string, scripts map[string]bool, script string, issueOnFail bool, allowScripts bool) {
+	name := "npm run " + script
 	if !scripts[script] {
+		res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm script missing: " + script})
 		return
 	}
+	if !allowScripts {
+		res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
+		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: name + " withheld: executes repo-declared code; pass --allow-scripts or set TASTE_ALLOW_SCRIPTS=1"})
+		return
+	}
 	status, summary := runExternalInDir(dir, "npm", "run", script)
-	res.Commands = append(res.Commands, commandItem{Name: "npm run " + script, Status: status, Summary: summary})
+	res.Commands = append(res.Commands, commandItem{Name: name, Status: status, Summary: summary})
 	if status == "fail" && issueOnFail {
-		res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: "npm run " + script, Message: summary})
+		res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: name, Message: summary})
 	}
 }
 

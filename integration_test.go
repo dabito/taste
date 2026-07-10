@@ -102,6 +102,9 @@ func TestTasteStrictJSUsesTargetWorkspace(t *testing.T) {
 	if _, err := exec.LookPath("npm"); err != nil {
 		t.Skip("npm not installed")
 	}
+	if _, ok := resolveTool(toolDefByName("typescript-language-server")); !ok {
+		t.Skip("typescript-language-server not installed")
+	}
 	var out, errOut bytes.Buffer
 	code := run([]string{"testdata/bad/js/failing-test/main.js", "--strict", "--json"}, strings.NewReader(""), &out, &errOut)
 	if code != 1 {
