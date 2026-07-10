@@ -245,6 +245,7 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 				Severity: lspSeverity(diag.Severity),
 				File:     file,
 				Line:     diag.Range.Start.Line + 1,
+				Column:   diag.Range.Start.Character + 1,
 				Code:     lspCode(diag),
 				Source:   diag.Source,
 				Message:  diag.Message,
