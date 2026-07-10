@@ -16,6 +16,9 @@ import (
 
 const version = "0.1.0-beta.2"
 
+// schema_version bumps when result, issueItem, checkItem, commandItem, or flavorsResult JSON shape changes break old consumers; additive optional fields do not need a bump.
+const schemaVersion = 1
+
 const defaultMaxIssues = 200
 
 type fixedItem struct {
@@ -29,6 +32,7 @@ type issueItem struct {
 	Severity string `json:"severity"`
 	File     string `json:"file,omitempty"`
 	Line     int    `json:"line,omitempty"`
+	Column   int    `json:"column,omitempty"`
 	Code     string `json:"code,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Message  string `json:"message"`
@@ -386,7 +390,7 @@ func runFlavors() flavorsResult {
 			available++
 		}
 	}
-	return flavorsResult{SchemaVersion: 1, Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
+	return flavorsResult{SchemaVersion: schemaVersion, Status: "ok", Summary: fmt.Sprintf("%d/%d checks available", available, len(checks)), Checks: checks}
 }
 
 func printFlavorsHuman(w io.Writer, res flavorsResult) {
@@ -534,7 +538,7 @@ func toolDefByName(name string) toolDef {
 }
 func runTaste(opts options) result {
 	scopeWasImplicit := opts.Scope == ""
-	res := result{SchemaVersion: 1, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
+	res := result{SchemaVersion: schemaVersion, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
 	if res.Level == "" {
 		res.Level = "easy"
 	}
