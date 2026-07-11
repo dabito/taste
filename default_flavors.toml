@@ -1,0 +1,134 @@
+[[flavor]]
+name = "go"
+extensions = [".go"]
+root_markers = ["go.mod"]
+
+  [[flavor.tool]]
+  name = "gofmt"
+  env = "TASTE_GOFMT"
+  install = "ships with Go"
+
+  [[flavor.tool]]
+  name = "go"
+  env = "TASTE_GO"
+  install = "install Go from https://go.dev/dl/"
+
+  [[flavor.tool]]
+  name = "gopls"
+  kind = "lsp"
+  env = "TASTE_GOPLS"
+  install = "go install golang.org/x/tools/gopls@latest"
+  issue_language = "go"
+  language_id = "go"
+
+  [flavor.actions.fix]
+  steps = [
+    { tool = "gofmt", kind = "argv", name = "gofmt", args = ["-w", "{files}"], per_file = false, fixable = true },
+  ]
+
+  [flavor.actions.taste]
+  steps = [
+    { tool = "gopls", kind = "lsp" },
+    { tool = "gofmt", kind = "argv", name = "gofmt -l", args = ["-l", "{files}"], per_file = false, fixable = true, list_output_as_issues = true },
+  ]
+
+  [flavor.actions.strict]
+  requires_root_marker = true
+  steps = [
+    { tool = "go", kind = "argv", name = "go test", args = ["test", "./..."], cwd = "root" },
+    { tool = "go", kind = "argv", name = "go vet", args = ["vet", "./..."], cwd = "root" },
+  ]
+
+[[flavor]]
+name = "javascript"
+extensions = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
+root_markers = ["package.json"]
+
+  [[flavor.tool]]
+  name = "npm"
+  env = "TASTE_NPM"
+  install = "install Node.js/npm"
+
+  [[flavor.tool]]
+  name = "prettier"
+  env = "TASTE_PRETTIER"
+  install = "npm install -D prettier"
+  local_npm = true
+
+  [[flavor.tool]]
+  name = "eslint"
+  env = "TASTE_ESLINT"
+  install = "npm install -D eslint"
+  local_npm = true
+
+  [[flavor.tool]]
+  name = "typescript-language-server"
+  kind = "lsp"
+  args = ["--stdio"]
+  env = "TASTE_TYPESCRIPT_LANGUAGE_SERVER"
+  install = "npm install -D typescript-language-server typescript"
+  local_npm = true
+  issue_language = "javascript"
+  language_id = "javascript"
+  [flavor.tool.language_ids]
+  ".ts" = "typescript"
+  ".mts" = "typescript"
+  ".cts" = "typescript"
+  ".tsx" = "typescriptreact"
+  ".jsx" = "javascriptreact"
+
+  [flavor.actions.fix]
+  steps = [
+    { tool = "npm", kind = "npm_script", script = "format", per_file = false, fixable = true, requires_confirmation = true },
+  ]
+
+  [flavor.actions.taste]
+  steps = [
+    { tool = "typescript-language-server", kind = "lsp" },
+    { tool = "npm", kind = "npm_script", script = "lint", per_file = false, requires_confirmation = true },
+  ]
+
+  [flavor.actions.strict]
+  steps = [
+    { tool = "npm", kind = "npm_script", script = "test", per_file = false, requires_confirmation = true },
+  ]
+
+[[flavor]]
+name = "bash"
+extensions = [".sh", ".bash", ".zsh"]
+
+  [[flavor.tool]]
+  name = "bash"
+  env = "TASTE_BASH"
+  install = "install bash"
+
+  [[flavor.tool]]
+  name = "bash-language-server"
+  kind = "lsp"
+  args = ["start"]
+  env = "TASTE_BASH_LANGUAGE_SERVER"
+  install = "npm install -D bash-language-server"
+  local_npm = true
+  issue_language = "bash"
+  language_id = "shellscript"
+
+  [[flavor.tool]]
+  name = "shellcheck"
+  env = "TASTE_SHELLCHECK"
+  install = "install shellcheck"
+
+  [[flavor.tool]]
+  name = "shfmt"
+  env = "TASTE_SHFMT"
+  install = "install shfmt"
+
+  [flavor.actions.taste]
+  steps = [
+    { tool = "bash-language-server", kind = "lsp" },
+    { tool = "bash", kind = "argv", name = "bash -n", args = ["-n", "{file}"], per_file = true },
+  ]
+
+  [flavor.actions.strict]
+  steps = [
+    { tool = "shellcheck", kind = "argv", args = ["{file}"], per_file = true },
+  ]
