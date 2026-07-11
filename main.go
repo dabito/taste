@@ -842,16 +842,33 @@ func gitChangedTrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, &gitStateError{inner: fmt.Errorf("git changed-file detection failed: %w", err)}
+		wrapped := fmt.Errorf("git changed-file detection failed: %w", err)
+		if isEmptyRepoRevisionError(err) {
+			return nil, &gitStateError{inner: wrapped}
+		}
+		return nil, wrapped
 	}
 	return splitGitFileList(out), nil
+}
+
+// isEmptyRepoRevisionError reports whether err is git failing to resolve
+// HEAD specifically because the repo has no commits yet (a real, harmless
+// repo-state edge case) rather than some other failure (permissions, disk
+// I/O, a corrupted repo) that happens to also be non-zero-exit.
+func isEmptyRepoRevisionError(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	stderr := strings.ToLower(string(exitErr.Stderr))
+	return strings.Contains(stderr, "bad revision") && strings.Contains(stderr, "head")
 }
 
 func gitUntrackedFiles() ([]string, error) {
 	cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, &gitStateError{inner: fmt.Errorf("git untracked-file detection failed: %w", err)}
+		return nil, fmt.Errorf("git untracked-file detection failed: %w", err)
 	}
 	files := splitGitFileList(out)
 	filtered := files[:0]
@@ -1030,6 +1047,24 @@ func runJS(res *result, files []string, format, diag bool, level string, allowSc
 	}
 }
 
+// gateRepoScript enforces the --allow-scripts/TASTE_ALLOW_SCRIPTS opt-in for
+// any step that executes code the target repo itself declares (an npm
+// script, a Makefile target, a go:generate directive, etc.) rather than a
+// fixed, known-safe tool binary. Any future call site of this kind should
+// call this instead of re-implementing the skip+warn pairing by hand, so
+// the gate can't be silently missed when a new one is added. Returns true
+// if the caller should proceed; if false, it has already recorded a skip
+// commandItem and an explanatory warning, and the caller must not execute
+// anything.
+func gateRepoScript(res *result, language, name string, allowScripts bool) bool {
+	if allowScripts {
+		return true
+	}
+	res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
+	res.Warnings = append(res.Warnings, warningItem{Language: language, Message: name + " withheld: executes repo-declared code; pass --allow-scripts or set TASTE_ALLOW_SCRIPTS=1"})
+	return false
+}
+
 func runNPMScript(res *result, dir string, scripts map[string]bool, script string, issueOnFail bool, allowScripts bool) {
 	name := "npm run " + script
 	if !scripts[script] {
@@ -1037,9 +1072,7 @@ func runNPMScript(res *result, dir string, scripts map[string]bool, script strin
 		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm script missing: " + script})
 		return
 	}
-	if !allowScripts {
-		res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
-		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: name + " withheld: executes repo-declared code; pass --allow-scripts or set TASTE_ALLOW_SCRIPTS=1"})
+	if !gateRepoScript(res, "javascript", name, allowScripts) {
 		return
 	}
 	status, summary := runExternalInDir(dir, "npm", "run", script)

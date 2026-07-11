@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -60,6 +61,47 @@ func TestTasteIncompleteWhenRequiredToolMissing(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected gopls listed in incomplete: %#v", payload.Incomplete)
+	}
+}
+
+func TestTasteChangedFallsBackToProjectOnEmptyRepo(t *testing.T) {
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", dir).CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %s: %v", out, err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("main.go", []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	code := run([]string{"--json"}, strings.NewReader(""), &out, &errOut)
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON, code=%d stderr=%s stdout=%s err=%v", code, errOut.String(), out.String(), err)
+	}
+	if payload.Scope != "project" {
+		t.Fatalf("expected fallback to --project scope on empty repo, no commits yet: %#v", payload)
+	}
+	found := false
+	for _, w := range payload.Warnings {
+		if strings.Contains(w.Message, "git changed-file detection failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a warning explaining the git-state fallback: %#v", payload.Warnings)
 	}
 }
 
