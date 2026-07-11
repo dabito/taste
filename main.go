@@ -118,12 +118,6 @@ type stdinPayload struct {
 	Paths []string `json:"paths"`
 }
 
-type fileGroups struct {
-	Go   []string
-	JS   []string
-	Bash []string
-}
-
 type toolDef struct {
 	Name     string
 	Language string
@@ -406,7 +400,7 @@ func printAvailability(w io.Writer, res flavorsResult, jsonOut bool) error {
 }
 
 func runFlavors() flavorsResult {
-	checks := availableChecks(allToolDefs())
+	checks := checksForFlavorNames(nil)
 	available := 0
 	for _, check := range checks {
 		if check.Available {
@@ -427,57 +421,6 @@ func printFlavorsHuman(w io.Writer, res flavorsResult) {
 		}
 		fmt.Fprintf(w, "- %s %s %s [%s] env:%s\n", status, check.Name, check.Language, path, check.Env)
 	}
-}
-
-func allToolDefs() []toolDef {
-	return []toolDef{
-		{Name: "gofmt", Language: "go", Env: "TASTE_GOFMT", Install: "ships with Go"},
-		{Name: "go", Language: "go", Env: "TASTE_GO", Install: "install Go from https://go.dev/dl/"},
-		{Name: "gopls", Language: "go", Env: "TASTE_GOPLS", Install: "go install golang.org/x/tools/gopls@latest"},
-		{Name: "npm", Language: "javascript", Env: "TASTE_NPM", Install: "install Node.js/npm"},
-		{Name: "prettier", Language: "javascript", Env: "TASTE_PRETTIER", Install: "npm install -D prettier", LocalNPM: true},
-		{Name: "eslint", Language: "javascript", Env: "TASTE_ESLINT", Install: "npm install -D eslint", LocalNPM: true},
-		{Name: "typescript-language-server", Language: "javascript", Env: "TASTE_TYPESCRIPT_LANGUAGE_SERVER", Install: "npm install -D typescript-language-server typescript", LocalNPM: true},
-		{Name: "bash", Language: "bash", Env: "TASTE_BASH", Install: "install bash"},
-		{Name: "shellcheck", Language: "bash", Env: "TASTE_SHELLCHECK", Install: "brew install shellcheck"},
-		{Name: "shfmt", Language: "bash", Env: "TASTE_SHFMT", Install: "brew install shfmt"},
-		{Name: "bash-language-server", Language: "bash", Env: "TASTE_BASH_LANGUAGE_SERVER", Install: "npm install -D bash-language-server", LocalNPM: true},
-	}
-}
-
-func availableChecks(defs []toolDef) []checkItem {
-	checks := make([]checkItem, 0, len(defs))
-	for _, def := range defs {
-		path, ok := resolveTool(def)
-		checks = append(checks, checkItem{Name: def.Name, Language: def.Language, Available: ok, Path: path, Env: def.Env, Install: def.Install})
-	}
-	sort.Slice(checks, func(i, j int) bool {
-		if checks[i].Language == checks[j].Language {
-			return checks[i].Name < checks[j].Name
-		}
-		return checks[i].Language < checks[j].Language
-	})
-	return checks
-}
-
-func checksForGroups(groups fileGroups) []checkItem {
-	langs := map[string]bool{}
-	if len(groups.Go) > 0 {
-		langs["go"] = true
-	}
-	if len(groups.JS) > 0 {
-		langs["javascript"] = true
-	}
-	if len(groups.Bash) > 0 {
-		langs["bash"] = true
-	}
-	defs := make([]toolDef, 0)
-	for _, def := range allToolDefs() {
-		if langs[def.Language] {
-			defs = append(defs, def)
-		}
-	}
-	return availableChecks(defs)
 }
 
 func resolveTool(def toolDef) (string, bool) {
@@ -551,14 +494,6 @@ func findLocalNPMBinFrom(dir, name string) (string, bool) {
 	return "", false
 }
 
-func toolDefByName(name string) toolDef {
-	for _, def := range allToolDefs() {
-		if def.Name == name {
-			return def
-		}
-	}
-	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
-}
 func runTaste(opts options) result {
 	scopeWasImplicit := opts.Scope == ""
 	res := result{SchemaVersion: schemaVersion, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
@@ -593,22 +528,40 @@ func runTaste(opts options) result {
 		res.Issues = append(res.Issues, issueItem{Severity: "error", Message: err.Error()})
 		return finalize(res, opts.MaxIssues)
 	}
-	groups := classifyFiles(paths)
-	res.Checks = checksForGroups(groups)
+	flavors, flavorWarning := getFlavors()
+	if flavorWarning != "" {
+		res.Warnings = append(res.Warnings, warningItem{Message: "flavor config: " + flavorWarning})
+	}
+	groups := classifyByFlavor(paths, flavors)
+	matched := map[string]bool{}
+	for name, files := range groups {
+		if len(files) > 0 {
+			matched[name] = true
+		}
+	}
+	res.Checks = checksForFlavorNames(matched)
 
 	format := opts.Intent == "fix"
 	diag := opts.Intent == "check" || opts.Intent == "fix"
 
-	if len(groups.Go) > 0 {
-		runGo(&res, groups.Go, format, diag, res.Level)
+	anyMatched := false
+	for _, fl := range flavors {
+		files := groups[fl.Name]
+		if len(files) == 0 {
+			continue
+		}
+		anyMatched = true
+		if format {
+			runFlavorAction(&res, fl, files, "fix", opts.AllowScripts)
+		}
+		if diag {
+			runFlavorAction(&res, fl, files, "taste", opts.AllowScripts)
+			if res.Level == "strict" {
+				runFlavorAction(&res, fl, files, "strict", opts.AllowScripts)
+			}
+		}
 	}
-	if len(groups.JS) > 0 {
-		runJS(&res, groups.JS, format, diag, res.Level, opts.AllowScripts)
-	}
-	if len(groups.Bash) > 0 {
-		runBash(&res, groups.Bash, format, diag, res.Level)
-	}
-	if len(paths) == 0 || (len(groups.Go) == 0 && len(groups.JS) == 0 && len(groups.Bash) == 0) {
+	if len(paths) == 0 || !anyMatched {
 		res.Warnings = append(res.Warnings, warningItem{Message: "no supported source files matched scope"})
 	}
 	return finalize(res, opts.MaxIssues)
@@ -914,30 +867,14 @@ func projectFiles(root string, skipTestdata bool) ([]string, error) {
 	return cleanPaths(paths), err
 }
 
-func classifyFiles(paths []string) fileGroups {
-	var groups fileGroups
-	for _, p := range paths {
-		switch {
-		case isGoFile(p):
-			groups.Go = append(groups.Go, p)
-		case isJSFile(p):
-			groups.JS = append(groups.JS, p)
-		case isBashFile(p):
-			groups.Bash = append(groups.Bash, p)
+func isKnownSource(p string) bool {
+	flavors, _ := getFlavors()
+	for _, fl := range flavors {
+		if fl.matches(p) {
+			return true
 		}
 	}
-	return groups
-}
-
-func isKnownSource(p string) bool { return isGoFile(p) || isJSFile(p) || isBashFile(p) }
-func isGoFile(p string) bool      { return strings.HasSuffix(p, ".go") }
-func isJSFile(p string) bool {
-	ext := filepath.Ext(p)
-	return ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx" || ext == ".mts" || ext == ".cts" || ext == ".mjs" || ext == ".cjs"
-}
-func isBashFile(p string) bool {
-	ext := filepath.Ext(p)
-	return ext == ".sh" || ext == ".bash" || ext == ".zsh"
+	return false
 }
 
 // reportToolFailure records a required diagnostic tool that failed to run
@@ -949,113 +886,6 @@ func reportToolFailure(res *result, language, tool string, err error) {
 	res.Incomplete = append(res.Incomplete, incompleteItem{Language: language, Tool: tool, Reason: err.Error()})
 }
 
-func runGo(res *result, files []string, format, diag bool, level string) {
-	if format {
-		if _, ok := resolveTool(toolDefByName("gofmt")); !ok {
-			res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: "gofmt not found; override with TASTE_GOFMT"})
-		} else {
-			cmd := append([]string{"-w"}, files...)
-			status, summary := runExternal("gofmt", cmd...)
-			res.Commands = append(res.Commands, commandItem{Name: "gofmt", Status: status, Summary: summary})
-			if status == "pass" {
-				res.Fixed = append(res.Fixed, fixedItem{Language: "go", Kind: "format", Files: len(files)})
-			} else {
-				res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gofmt", Message: summary})
-			}
-		}
-	}
-	if !diag {
-		return
-	}
-	root := findWorkspaceRoot(files)
-	issues, summary, err := runGoplsDiagnostics(root, files)
-	if err != nil {
-		reportToolFailure(res, "go", "gopls", err)
-	} else {
-		status := "pass"
-		if len(issues) > 0 {
-			status = "fail"
-		}
-		if summary == "" {
-			summary = fmt.Sprintf("%d diagnostics", len(issues))
-		}
-		res.Commands = append(res.Commands, commandItem{Name: "gopls", Status: status, Summary: summary})
-		res.Issues = append(res.Issues, issues...)
-	}
-	if !format {
-		status, summary := runExternal("gofmt", append([]string{"-l"}, files...)...)
-		res.Commands = append(res.Commands, commandItem{Name: "gofmt -l", Status: status, Summary: summary})
-		if status == "pass" && strings.TrimSpace(summary) != "" {
-			for _, f := range strings.Fields(summary) {
-				res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", File: f, Code: "gofmt", Message: "file is not formatted"})
-			}
-		} else if status == "fail" {
-			res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gofmt", Message: summary})
-		}
-	}
-	if level == "strict" && fileExists(filepath.Join(root, "go.mod")) {
-		for _, spec := range []struct {
-			name string
-			args []string
-		}{{"go test", []string{"test", "./..."}}, {"go vet", []string{"vet", "./..."}}} {
-			status, summary := runExternalInDir(root, "go", spec.args...)
-			res.Commands = append(res.Commands, commandItem{Name: spec.name, Status: status, Summary: summary})
-			if status == "fail" {
-				res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: spec.name, Message: summary})
-			}
-		}
-	}
-}
-
-func runJS(res *result, files []string, format, diag bool, level string, allowScripts bool) {
-
-	root := findWorkspaceRoot(files)
-	if diag {
-		issues, summary, err := runTypeScriptDiagnostics(root, files)
-		if err != nil {
-			reportToolFailure(res, "javascript", "typescript-language-server", err)
-		} else {
-			status := "pass"
-			if len(issues) > 0 {
-				status = "fail"
-			}
-			if summary == "" {
-				summary = fmt.Sprintf("%d diagnostics", len(issues))
-			}
-			res.Commands = append(res.Commands, commandItem{Name: "typescript-language-server", Status: status, Summary: summary})
-			res.Issues = append(res.Issues, issues...)
-		}
-	}
-
-	scripts := packageScripts(root)
-	if len(scripts) == 0 {
-		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "package.json scripts not found"})
-		return
-	}
-	if _, ok := resolveToolInDir(toolDefByName("npm"), root); !ok {
-		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm not found; override with TASTE_NPM"})
-		return
-	}
-	if format {
-		runNPMScript(res, root, scripts, "format", true, allowScripts)
-	}
-	if diag {
-		runNPMScript(res, root, scripts, "lint", true, allowScripts)
-		if level == "strict" {
-			runNPMScript(res, root, scripts, "test", true, allowScripts)
-		}
-	}
-}
-
-// gateRepoScript enforces the --allow-scripts/TASTE_ALLOW_SCRIPTS opt-in for
-// any step that executes code the target repo itself declares (an npm
-// script, a Makefile target, a go:generate directive, etc.) rather than a
-// fixed, known-safe tool binary. Any future call site of this kind should
-// call this instead of re-implementing the skip+warn pairing by hand, so
-// the gate can't be silently missed when a new one is added. Returns true
-// if the caller should proceed; if false, it has already recorded a skip
-// commandItem and an explanatory warning, and the caller must not execute
-// anything.
 func gateRepoScript(res *result, language, name string, allowScripts bool) bool {
 	if allowScripts {
 		return true
@@ -1063,23 +893,6 @@ func gateRepoScript(res *result, language, name string, allowScripts bool) bool 
 	res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
 	res.Warnings = append(res.Warnings, warningItem{Language: language, Message: name + " withheld: executes repo-declared code; pass --allow-scripts or set TASTE_ALLOW_SCRIPTS=1"})
 	return false
-}
-
-func runNPMScript(res *result, dir string, scripts map[string]bool, script string, issueOnFail bool, allowScripts bool) {
-	name := "npm run " + script
-	if !scripts[script] {
-		res.Commands = append(res.Commands, commandItem{Name: name, Status: "skip"})
-		res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: "npm script missing: " + script})
-		return
-	}
-	if !gateRepoScript(res, "javascript", name, allowScripts) {
-		return
-	}
-	status, summary := runExternalInDir(dir, "npm", "run", script)
-	res.Commands = append(res.Commands, commandItem{Name: name, Status: status, Summary: summary})
-	if status == "fail" && issueOnFail {
-		res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: name, Message: summary})
-	}
 }
 
 func packageScripts(dir string) map[string]bool {
@@ -1098,51 +911,6 @@ func packageScripts(dir string) map[string]bool {
 		out[k] = true
 	}
 	return out
-}
-
-func runBash(res *result, files []string, format, diag bool, level string) {
-	if format {
-		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "bash formatting not configured"})
-	}
-	if !diag {
-		return
-	}
-	root := findWorkspaceRoot(files)
-	issues, summary, err := runBashLanguageDiagnostics(root, files)
-	if err != nil {
-		reportToolFailure(res, "bash", "bash-language-server", err)
-	} else {
-		status := "pass"
-		if len(issues) > 0 {
-			status = "fail"
-		}
-		if summary == "" {
-			summary = fmt.Sprintf("%d diagnostics", len(issues))
-		}
-		res.Commands = append(res.Commands, commandItem{Name: "bash-language-server", Status: status, Summary: summary})
-		res.Issues = append(res.Issues, issues...)
-	}
-	for _, f := range files {
-		status, summary := runExternal("bash", "-n", f)
-		res.Commands = append(res.Commands, commandItem{Name: "bash -n " + f, Status: status, Summary: summary})
-		if status == "fail" {
-			res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", File: f, Code: "bash -n", Message: summary})
-		}
-	}
-	if level != "strict" {
-		return
-	}
-	if _, ok := resolveTool(toolDefByName("shellcheck")); !ok {
-		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: "shellcheck not found; override with TASTE_SHELLCHECK"})
-		return
-	}
-	for _, f := range files {
-		status, summary := runExternal("shellcheck", f)
-		res.Commands = append(res.Commands, commandItem{Name: "shellcheck " + f, Status: status, Summary: summary})
-		if status == "fail" {
-			res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", File: f, Code: "shellcheck", Message: summary})
-		}
-	}
 }
 
 func runExternal(name string, args ...string) (string, string) {

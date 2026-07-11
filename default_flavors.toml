@@ -23,7 +23,7 @@ root_markers = ["go.mod"]
 
   [flavor.actions.fix]
   steps = [
-    { tool = "gofmt", kind = "argv", name = "gofmt", args = ["-w", "{files}"], per_file = false, fixable = true },
+    { tool = "gofmt", kind = "argv", name = "gofmt", args = ["-w", "{files}"], per_file = false, fixable = true, optional = true },
   ]
 
   [flavor.actions.taste]
@@ -130,5 +130,5 @@ extensions = [".sh", ".bash", ".zsh"]
 
   [flavor.actions.strict]
   steps = [
-    { tool = "shellcheck", kind = "argv", args = ["{file}"], per_file = true },
+    { tool = "shellcheck", kind = "argv", args = ["{file}"], per_file = true, optional = true },
   ]

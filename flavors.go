@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -38,8 +41,8 @@ func (t flavorTool) languageIDFor(file string) string {
 	return t.IssueLanguage
 }
 
-func (t flavorTool) toolDef() toolDef {
-	return toolDef{Name: t.Name, Env: t.Env, Install: t.Install, LocalNPM: t.LocalNPM}
+func (t flavorTool) toolDef(language string) toolDef {
+	return toolDef{Name: t.Name, Language: language, Env: t.Env, Install: t.Install, LocalNPM: t.LocalNPM}
 }
 
 // flavorStep is one action of an action (fix/taste/strict): run a fixed
@@ -56,6 +59,7 @@ type flavorStep struct {
 	Fixable              bool     `toml:"fixable"`
 	RequiresConfirmation bool     `toml:"requires_confirmation"`
 	ListOutputAsIssues   bool     `toml:"list_output_as_issues"`
+	Optional             bool     `toml:"optional"`
 }
 
 func (s flavorStep) displayName() string {
@@ -214,4 +218,72 @@ func userFlavorsPath() (string, bool) {
 	}
 	path := filepath.Join(configHome, "taste", "flavors.toml")
 	return path, fileExists(path)
+}
+
+var (
+	flavorsOnce    sync.Once
+	flavorsCached  []flavorDef
+	flavorsWarning string
+)
+
+// getFlavors returns the resolved flavor registry, resiliently: a malformed
+// project/user override degrades to the embedded default plus a warning
+// (surfaced by the caller), rather than crashing taste entirely over a
+// config typo. The embedded default itself must always parse -- if it
+// doesn't, that is a real bug in taste, not a user config problem.
+func getFlavors() ([]flavorDef, string) {
+	flavorsOnce.Do(func() {
+		flavors, err := loadFlavors()
+		if err != nil {
+			base, baseErr := parseFlavorTOML(defaultFlavorsTOML)
+			if baseErr != nil {
+				panic(fmt.Errorf("embedded default_flavors.toml is invalid: %w", baseErr))
+			}
+			flavorsCached = base
+			flavorsWarning = err.Error()
+			return
+		}
+		flavorsCached = flavors
+	})
+	return flavorsCached, flavorsWarning
+}
+
+// toolDefByFlavorTool finds a tool by name across the active flavor
+// registry, returning its owning flavor's name as toolDef.Language.
+// Replaces the old allToolDefs()-backed toolDefByName lookup; keeps the
+// same synthesized fallback (a TASTE_<NAME> env var) for any tool name not
+// present in any flavor, so ad hoc resolveTool(toolDefByName(name)) callers
+// behave identically to before.
+func toolDefByName(name string) toolDef {
+	flavors, _ := getFlavors()
+	for _, fl := range flavors {
+		if t, ok := fl.toolByName(name); ok {
+			return t.toolDef(fl.Name)
+		}
+	}
+	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
+}
+
+// checksForFlavorNames flattens tool entries for the given flavor names
+// (or every flavor if names is empty) into availability checks, replacing
+// the old allToolDefs()-filtered-by-language approach.
+func checksForFlavorNames(names map[string]bool) []checkItem {
+	flavors, _ := getFlavors()
+	checks := make([]checkItem, 0)
+	for _, fl := range flavors {
+		if len(names) > 0 && !names[fl.Name] {
+			continue
+		}
+		for _, t := range fl.Tools {
+			path, ok := resolveTool(t.toolDef(fl.Name))
+			checks = append(checks, checkItem{Name: t.Name, Language: fl.Name, Available: ok, Path: path, Env: t.Env, Install: t.Install})
+		}
+	}
+	sort.Slice(checks, func(i, j int) bool {
+		if checks[i].Language == checks[j].Language {
+			return checks[i].Name < checks[j].Name
+		}
+		return checks[i].Language < checks[j].Language
+	})
+	return checks
 }

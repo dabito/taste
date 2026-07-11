@@ -63,9 +63,16 @@ func TestStdinJSONArgs(t *testing.T) {
 }
 
 func TestClassifyFiles(t *testing.T) {
-	groups := classifyFiles([]string{"main.go", "app.ts", "script.sh", "README.md"})
-	if len(groups.Go) != 1 || len(groups.JS) != 1 || len(groups.Bash) != 1 {
+	flavors, err := loadFlavors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := classifyByFlavor([]string{"main.go", "app.ts", "script.sh", "README.md"}, flavors)
+	if len(groups["go"]) != 1 || len(groups["javascript"]) != 1 || len(groups["bash"]) != 1 {
 		t.Fatalf("unexpected groups: %#v", groups)
+	}
+	if _, ok := groups["README.md"]; ok {
+		t.Fatalf("unmatched extension should not produce a group: %#v", groups)
 	}
 }
 
@@ -135,8 +142,7 @@ func TestFinalizeCapsIssuesAndSetsSchema(t *testing.T) {
 	}
 }
 func TestChecksHeader(t *testing.T) {
-	groups := fileGroups{Go: []string{"main.go"}}
-	checks := checksForGroups(groups)
+	checks := checksForFlavorNames(map[string]bool{"go": true})
 	res := finalize(result{SchemaVersion: 1, Checks: checks}, defaultMaxIssues)
 	if !strings.Contains(res.Header, "gofmt") || !strings.HasPrefix(res.Header, "checks:") {
 		t.Fatalf("unexpected header: %q", res.Header)
