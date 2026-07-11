@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,32 @@ func TestTasteChangedFallsBackToProjectOnEmptyRepo(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected a warning explaining the git-state fallback: %#v", payload.Warnings)
+	}
+}
+
+func TestTasteFixDoesNotDiagnose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+	// Deliberately has a real type error gopls would catch, to prove --fix
+	// doesn't run diagnostics at all -- not just that it doesn't report
+	// this specific issue.
+	src := "package main\n\nfunc main() {\n\tvar x int = \"bad\"\n\t_ = x\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := run([]string{path, "--fix", "--json"}, strings.NewReader(""), &out, &errOut)
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON, code=%d stderr=%s stdout=%s err=%v", code, errOut.String(), out.String(), err)
+	}
+	for _, cmd := range payload.Commands {
+		if cmd.Name == "gopls" {
+			t.Fatalf("--fix should not run diagnostics (found gopls command): %#v", payload.Commands)
+		}
+	}
+	if len(payload.Issues) != 0 {
+		t.Fatalf("--fix should not report diagnostic issues: %#v", payload.Issues)
 	}
 }
 
