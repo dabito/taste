@@ -12,7 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-//go:embed default_flavors.toml
+//go:embed flavors.toml.default
 var defaultFlavorsTOML string
 
 // flavorTool is one resolvable binary a flavor depends on: a plain argv
@@ -133,7 +133,7 @@ type flavorConfig struct {
 func loadFlavors() ([]flavorDef, error) {
 	base, err := parseFlavorTOML(defaultFlavorsTOML)
 	if err != nil {
-		return nil, fmt.Errorf("embedded default_flavors.toml is invalid: %w", err)
+		return nil, fmt.Errorf("embedded flavors.toml.default is invalid: %w", err)
 	}
 	byName := map[string]flavorDef{}
 	order := make([]string, 0, len(base))
@@ -237,7 +237,7 @@ func getFlavors() ([]flavorDef, string) {
 		if err != nil {
 			base, baseErr := parseFlavorTOML(defaultFlavorsTOML)
 			if baseErr != nil {
-				panic(fmt.Errorf("embedded default_flavors.toml is invalid: %w", baseErr))
+				panic(fmt.Errorf("embedded flavors.toml.default is invalid: %w", baseErr))
 			}
 			flavorsCached = base
 			flavorsWarning = err.Error()

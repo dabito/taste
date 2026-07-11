@@ -457,6 +457,17 @@ func findWorkspaceRoot(paths []string) string {
 	if err != nil {
 		return "."
 	}
+	// original is the target's own directory: the correct fallback when no
+	// project marker exists anywhere above it. Falling back to the calling
+	// process's cwd instead (as this used to) is an arbitrary, caller-
+	// state-dependent guess that has nothing to do with where the file
+	// actually lives -- e.g. an agent invoking taste from its own repo root
+	// on a lone ad-hoc file elsewhere would silently hand gopls the wrong
+	// workspace, which can make it silently miss real diagnostics rather
+	// than error (confirmed: same file, only the invoking cwd differed,
+	// went from correctly reporting an unused-variable error to reporting
+	// zero diagnostics).
+	original := abs
 	for {
 		if fileExists(filepath.Join(abs, "go.mod")) || fileExists(filepath.Join(abs, "package.json")) || fileExists(filepath.Join(abs, "tsconfig.json")) || fileExists(filepath.Join(abs, ".git")) {
 			return abs
@@ -467,11 +478,7 @@ func findWorkspaceRoot(paths []string) string {
 		}
 		abs = parent
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return cwd
+	return original
 }
 
 func lspSeverity(severity int) string {
