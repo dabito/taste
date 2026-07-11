@@ -128,6 +128,12 @@ func TestParseArgsRejectProjectFix(t *testing.T) {
 	}
 }
 
+func TestParseArgsRejectStrictFix(t *testing.T) {
+	if _, err := parseArgs([]string{"--strict", "--fix"}, strings.NewReader("")); err == nil {
+		t.Fatal("expected --strict --fix rejection: --fix mutates only and does not diagnose")
+	}
+}
+
 func TestFinalizeCapsIssuesAndSetsSchema(t *testing.T) {
 	res := finalize(result{SchemaVersion: 1, Issues: []issueItem{
 		{Severity: "warning", File: "b.go", Message: "warn"},

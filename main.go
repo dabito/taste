@@ -159,7 +159,7 @@ Targets:
   use -- before targets that begin with -
 
 Flags:
-  --fix                 safe autofix, then diagnostics
+  --fix                 safe autofix only; does not diagnose (run again without --fix to check)
   --dry                 diagnostics only; default
   --easy                fast/local checks; default
   --strict              complete readiness checks
@@ -185,7 +185,7 @@ Targets:
   use -- before targets that begin with -
 
 Flags:
-  --fix                 safe autofix, then diagnostics
+  --fix                 safe autofix only; does not diagnose (run again without --fix to check)
   --dry                 diagnostics only; default
   --easy                fast/local checks; default
   --strict              complete readiness checks
@@ -351,6 +351,9 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 	}
 	if opts.Intent == "fix" && opts.Scope == "project" {
 		return options{}, cliError("--project cannot be combined with --fix in v0; pass explicit targets or use --changed --fix")
+	}
+	if opts.Intent == "fix" && opts.Level == "strict" {
+		return options{}, cliError("--strict cannot be combined with --fix; --fix mutates only and does not diagnose -- run taste again without --fix to diagnose, optionally with --strict")
 	}
 	return opts, nil
 }
@@ -542,7 +545,11 @@ func runTaste(opts options) result {
 	res.Checks = checksForFlavorNames(matched)
 
 	format := opts.Intent == "fix"
-	diag := opts.Intent == "check" || opts.Intent == "fix"
+	// --fix mutates only; it must not silently also run the full diagnose
+	// pass (spawning LSP tools, waiting on round-trips) just because a
+	// caller asked for a fix. Diagnosing after fixing is two explicit
+	// calls, not one implicit one.
+	diag := opts.Intent == "check"
 
 	anyMatched := false
 	for _, fl := range flavors {

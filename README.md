@@ -44,7 +44,7 @@ Targets are files or directories. Multiple targets allowed. Use `--` before targ
 Flags:
 
 ```text
---fix             safe autofix, then diagnostics
+--fix             safe autofix only; does not diagnose (run again without --fix to check)
 --dry             diagnostics only; default
 --easy            fast/local checks; default
 --strict          complete readiness checks
