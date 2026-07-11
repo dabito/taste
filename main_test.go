@@ -43,11 +43,11 @@ func TestCheckLevelArgs(t *testing.T) {
 	if opts.Intent != "check" || opts.Level != "strict" || opts.Scope != "paths" || len(opts.Paths) != 1 {
 		t.Fatalf("unexpected strict opts: %#v", opts)
 	}
-	opts, err = parseArgs([]string{"main.go", "--fix"}, strings.NewReader(""))
+	opts, err = parseArgs([]string{"main.go", "--autofix"}, strings.NewReader(""))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.Intent != "fix" || opts.Level != "easy" {
+	if opts.Intent != "autofix" || opts.Level != "easy" {
 		t.Fatalf("unexpected fix opts: %#v", opts)
 	}
 }
@@ -62,13 +62,17 @@ func TestStdinJSONArgs(t *testing.T) {
 	}
 }
 
+// TestClassifyFiles exercises classifyByFlavor's generic grouping logic
+// against synthetic flavors, not the real go/js/bash config -- see
+// syntheticFlavor in engine_test.go for why. Real-config extension mapping
+// is covered by TestFlavorMatchesByExtension in flavors_test.go.
 func TestClassifyFiles(t *testing.T) {
-	flavors, err := loadFlavors()
-	if err != nil {
-		t.Fatal(err)
+	flavors := []flavorDef{
+		{Name: "alpha", Extensions: []string{".alpha"}},
+		{Name: "beta", Extensions: []string{".beta"}},
 	}
-	groups := classifyByFlavor([]string{"main.go", "app.ts", "script.sh", "README.md"}, flavors)
-	if len(groups["go"]) != 1 || len(groups["javascript"]) != 1 || len(groups["bash"]) != 1 {
+	groups := classifyByFlavor([]string{"main.alpha", "app.beta", "README.md"}, flavors)
+	if len(groups["alpha"]) != 1 || len(groups["beta"]) != 1 {
 		t.Fatalf("unexpected groups: %#v", groups)
 	}
 	if _, ok := groups["README.md"]; ok {
@@ -123,14 +127,14 @@ func TestParseArgsSeparatorAndMaxIssues(t *testing.T) {
 }
 
 func TestParseArgsRejectProjectFix(t *testing.T) {
-	if _, err := parseArgs([]string{"--project", "--fix"}, strings.NewReader("")); err == nil {
-		t.Fatal("expected --project --fix rejection")
+	if _, err := parseArgs([]string{"--project", "--autofix"}, strings.NewReader("")); err == nil {
+		t.Fatal("expected --project --autofix rejection")
 	}
 }
 
 func TestParseArgsRejectStrictFix(t *testing.T) {
-	if _, err := parseArgs([]string{"--strict", "--fix"}, strings.NewReader("")); err == nil {
-		t.Fatal("expected --strict --fix rejection: --fix mutates only and does not diagnose")
+	if _, err := parseArgs([]string{"--strict", "--autofix"}, strings.NewReader("")); err == nil {
+		t.Fatal("expected --strict --autofix rejection: --autofix mutates only and does not diagnose")
 	}
 }
 
@@ -139,7 +143,7 @@ func TestFinalizeCapsIssuesAndSetsSchema(t *testing.T) {
 		{Severity: "warning", File: "b.go", Message: "warn"},
 		{Severity: "error", File: "a.go", Message: "err 1"},
 		{Severity: "error", File: "c.go", Message: "err 2"},
-	}}, 2)
+	}}, 2, true)
 	if res.SchemaVersion != 1 || res.Status != "fail" || res.TotalIssues != 3 || len(res.Issues) != 2 {
 		t.Fatalf("unexpected capped result: %#v", res)
 	}
@@ -149,7 +153,7 @@ func TestFinalizeCapsIssuesAndSetsSchema(t *testing.T) {
 }
 func TestChecksHeader(t *testing.T) {
 	checks := checksForFlavorNames(map[string]bool{"go": true})
-	res := finalize(result{SchemaVersion: 1, Checks: checks}, defaultMaxIssues)
+	res := finalize(result{SchemaVersion: 1, Checks: checks}, defaultMaxIssues, true)
 	if !strings.Contains(res.Header, "gofmt") || !strings.HasPrefix(res.Header, "checks:") {
 		t.Fatalf("unexpected header: %q", res.Header)
 	}

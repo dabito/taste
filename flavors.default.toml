@@ -23,7 +23,7 @@ root_markers = ["go.mod"]
 
   [flavor.actions.fix]
   steps = [
-    { tool = "gofmt", kind = "argv", name = "gofmt", args = ["-w", "{files}"], per_file = false, fixable = true, optional = true },
+    { tool = "gofmt", kind = "argv", name = "gofmt", args = ["-l", "-w", "{files}"], per_file = false, fixable = true, optional = true },
   ]
 
   [flavor.actions.taste]

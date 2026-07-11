@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -37,33 +36,10 @@ func TestTasteGoplsDiagnosticsFixture(t *testing.T) {
 	}
 }
 
-func TestTasteIncompleteWhenRequiredToolMissing(t *testing.T) {
-	t.Setenv("TASTE_GOPLS", "/nonexistent/gopls")
-	var out, errOut bytes.Buffer
-	code := run([]string{"testdata/good/go/clean/main.go", "--json"}, strings.NewReader(""), &out, &errOut)
-	if code != 3 {
-		t.Fatalf("expected incomplete exit code 3, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
-	}
-	var payload result
-	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.Status != "incomplete" {
-		t.Fatalf("expected status=incomplete: %#v", payload)
-	}
-	if len(payload.Issues) != 0 {
-		t.Fatalf("expected no confirmed issues, only an unavailable tool: %#v", payload.Issues)
-	}
-	found := false
-	for _, item := range payload.Incomplete {
-		if item.Tool == "gopls" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected gopls listed in incomplete: %#v", payload.Incomplete)
-	}
-}
+// TestTasteIncompleteWhenRequiredToolMissing and TestTasteFixDoesNotDiagnose
+// (generic engine mechanisms) now live in engine_test.go against a
+// synthetic flavor, decoupled from the real go/js/bash config -- see
+// syntheticFlavor there for why.
 
 func TestTasteChangedFallsBackToProjectOnEmptyRepo(t *testing.T) {
 	dir := t.TempDir()
@@ -103,32 +79,6 @@ func TestTasteChangedFallsBackToProjectOnEmptyRepo(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected a warning explaining the git-state fallback: %#v", payload.Warnings)
-	}
-}
-
-func TestTasteFixDoesNotDiagnose(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "main.go")
-	// Deliberately has a real type error gopls would catch, to prove --fix
-	// doesn't run diagnostics at all -- not just that it doesn't report
-	// this specific issue.
-	src := "package main\n\nfunc main() {\n\tvar x int = \"bad\"\n\t_ = x\n}\n"
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out, errOut bytes.Buffer
-	code := run([]string{path, "--fix", "--json"}, strings.NewReader(""), &out, &errOut)
-	var payload result
-	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
-		t.Fatalf("invalid JSON, code=%d stderr=%s stdout=%s err=%v", code, errOut.String(), out.String(), err)
-	}
-	for _, cmd := range payload.Commands {
-		if cmd.Name == "gopls" {
-			t.Fatalf("--fix should not run diagnostics (found gopls command): %#v", payload.Commands)
-		}
-	}
-	if len(payload.Issues) != 0 {
-		t.Fatalf("--fix should not report diagnostic issues: %#v", payload.Issues)
 	}
 }
 

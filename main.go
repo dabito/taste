@@ -151,7 +151,7 @@ func isGitStateError(err error) bool {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--allow-scripts]
+	fmt.Fprintln(os.Stderr, `usage: taste [targets...] [--autofix|--dry] [--easy|--strict] [--json] [--allow-scripts]
 
 Targets:
   files or directories; multiple allowed
@@ -159,7 +159,7 @@ Targets:
   use -- before targets that begin with -
 
 Flags:
-  --fix                 safe autofix only; does not diagnose (run again without --fix to check)
+  --autofix             safe autofix only; does not diagnose (run again without --autofix to check)
   --dry                 diagnostics only; default
   --easy                fast/local checks; default
   --strict              complete readiness checks
@@ -171,13 +171,13 @@ Flags:
 
 Examples:
   taste main.go
-  taste main.go scripts/dev.sh --fix
+  taste main.go scripts/dev.sh --autofix
   taste . --strict
   taste --changed --strict --json`)
 }
 
 func usageTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--allow-scripts]
+	fmt.Fprintln(w, `usage: taste [targets...] [--autofix|--dry] [--easy|--strict] [--json] [--allow-scripts]
 
 Targets:
   files or directories; multiple allowed
@@ -185,7 +185,7 @@ Targets:
   use -- before targets that begin with -
 
 Flags:
-  --fix                 safe autofix only; does not diagnose (run again without --fix to check)
+  --autofix             safe autofix only; does not diagnose (run again without --autofix to check)
   --dry                 diagnostics only; default
   --easy                fast/local checks; default
   --strict              complete readiness checks
@@ -197,7 +197,7 @@ Flags:
 
 Examples:
   taste main.go
-  taste main.go scripts/dev.sh --fix
+  taste main.go scripts/dev.sh --autofix
   taste . --strict
   taste --changed --strict --json`)
 }
@@ -207,6 +207,18 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runWithFlavors(args, stdin, stdout, stderr, nil)
+}
+
+// runWithFlavors is run with the flavor registry injected instead of resolved
+// from getFlavors(). Production always passes nil (via run), which falls
+// back to the real embedded/project/user registry. Tests exercising generic
+// dispatch mechanics (autofix/diagnose decoupling, incomplete-tool handling,
+// script gating, unfixable-tool warnings) should pass a synthetic flavor
+// here instead of relying on the real go/js/bash config -- that keeps the
+// engine's tests from breaking when the shipped tool config changes for
+// reasons unrelated to the mechanism under test.
+func runWithFlavors(args []string, stdin io.Reader, stdout, stderr io.Writer, flavors []flavorDef) int {
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v":
@@ -232,7 +244,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	res := runTaste(opts)
+	var res result
+	if flavors != nil {
+		res = runTasteWithFlavors(opts, flavors, "")
+	} else {
+		res = runTaste(opts)
+	}
 	if opts.JSONOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -278,8 +295,8 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 			opts.Level = "easy"
 		case arg == "--strict":
 			opts.Level = "strict"
-		case arg == "--fix":
-			opts.Intent = "fix"
+		case arg == "--autofix":
+			opts.Intent = "autofix"
 		case arg == "--dry":
 			opts.Intent = "check"
 		case arg == "--allow-scripts":
@@ -349,11 +366,11 @@ func parseArgs(args []string, stdin io.Reader) (options, error) {
 	if opts.Level != "easy" && opts.Level != "strict" {
 		return options{}, cliError("unknown level: " + opts.Level)
 	}
-	if opts.Intent == "fix" && opts.Scope == "project" {
-		return options{}, cliError("--project cannot be combined with --fix in v0; pass explicit targets or use --changed --fix")
+	if opts.Intent == "autofix" && opts.Scope == "project" {
+		return options{}, cliError("--project cannot be combined with --autofix in v0; pass explicit targets or use --changed --autofix")
 	}
-	if opts.Intent == "fix" && opts.Level == "strict" {
-		return options{}, cliError("--strict cannot be combined with --fix; --fix mutates only and does not diagnose -- run taste again without --fix to diagnose, optionally with --strict")
+	if opts.Intent == "autofix" && opts.Level == "strict" {
+		return options{}, cliError("--strict cannot be combined with --autofix; --autofix mutates only and does not diagnose -- run taste again without --autofix to diagnose, optionally with --strict")
 	}
 	return opts, nil
 }
@@ -498,6 +515,18 @@ func findLocalNPMBinFrom(dir, name string) (string, bool) {
 }
 
 func runTaste(opts options) result {
+	flavors, flavorWarning := getFlavors()
+	return runTasteWithFlavors(opts, flavors, flavorWarning)
+}
+
+// runTasteWithFlavors is runTaste with the flavor registry taken as an
+// explicit input instead of resolved internally via getFlavors(). This is
+// the seam that lets engine-mechanism tests (autofix/diagnose decoupling,
+// incomplete-tool handling, script gating, unfixable-tool warnings) run
+// against a synthetic flavor rather than depending on the real go/js/bash
+// defaults, so those tests don't break for reasons unrelated to the
+// mechanism they're actually checking.
+func runTasteWithFlavors(opts options, flavors []flavorDef, flavorWarning string) result {
 	scopeWasImplicit := opts.Scope == ""
 	res := result{SchemaVersion: schemaVersion, Scope: opts.Scope, Level: opts.Level, Checks: []checkItem{}, Fixed: []fixedItem{}, Issues: []issueItem{}, Warnings: []warningItem{}, Commands: []commandItem{}}
 	if res.Level == "" {
@@ -529,9 +558,8 @@ func runTaste(opts options) result {
 	}
 	if err != nil {
 		res.Issues = append(res.Issues, issueItem{Severity: "error", Message: err.Error()})
-		return finalize(res, opts.MaxIssues)
+		return finalize(res, opts.MaxIssues, false)
 	}
-	flavors, flavorWarning := getFlavors()
 	if flavorWarning != "" {
 		res.Warnings = append(res.Warnings, warningItem{Message: "flavor config: " + flavorWarning})
 	}
@@ -544,8 +572,8 @@ func runTaste(opts options) result {
 	}
 	res.Checks = checksForFlavorNames(matched)
 
-	format := opts.Intent == "fix"
-	// --fix mutates only; it must not silently also run the full diagnose
+	format := opts.Intent == "autofix"
+	// --autofix mutates only; it must not silently also run the full diagnose
 	// pass (spawning LSP tools, waiting on round-trips) just because a
 	// caller asked for a fix. Diagnosing after fixing is two explicit
 	// calls, not one implicit one.
@@ -560,6 +588,9 @@ func runTaste(opts options) result {
 		anyMatched = true
 		if format {
 			runFlavorAction(&res, fl, files, "fix", opts.AllowScripts)
+			if unfixable := fl.unfixableDiagnosticTools(); len(unfixable) > 0 {
+				res.Warnings = append(res.Warnings, warningItem{Message: fmt.Sprintf("%s: %s can report issues --autofix cannot resolve (no fix step configured); run without --autofix to check", fl.Name, strings.Join(unfixable, ", "))})
+			}
 		}
 		if diag {
 			runFlavorAction(&res, fl, files, "taste", opts.AllowScripts)
@@ -571,10 +602,10 @@ func runTaste(opts options) result {
 	if len(paths) == 0 || !anyMatched {
 		res.Warnings = append(res.Warnings, warningItem{Message: "no supported source files matched scope"})
 	}
-	return finalize(res, opts.MaxIssues)
+	return finalize(res, opts.MaxIssues, diag)
 }
 
-func finalize(res result, maxIssues int) result {
+func finalize(res result, maxIssues int, diagnosed bool) result {
 	res = ensureResultSlices(res)
 	res.Header = checksHeader(res)
 	res.Issues = ensureIssues(sortIssues(res.Issues))
@@ -596,7 +627,11 @@ func finalize(res result, maxIssues int) result {
 		return res
 	}
 	res.Status = "pass"
-	res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
+	if diagnosed {
+		res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
+	} else {
+		res.Summary = fmt.Sprintf("PASS fixed: %s; not diagnosed -- run again without --autofix to check for remaining issues", fixedSummary(res.Fixed))
+	}
 	return res
 }
 func ensureResultSlices(res result) result {
@@ -925,6 +960,14 @@ func runExternal(name string, args ...string) (string, string) {
 }
 
 func runExternalInDir(dir, name string, args ...string) (string, string) {
+	status, raw := runExternalInDirRaw(dir, name, args...)
+	return status, summarizeOutput([]byte(raw))
+}
+
+// runExternalInDirRaw is runExternalInDir without summarizeOutput's 3-line
+// cap, for callers that need to inspect the tool's full output themselves
+// (e.g. counting how many files a fixer actually reported changing).
+func runExternalInDirRaw(dir, name string, args ...string) (string, string) {
 	path, ok := resolveToolInDir(toolDefByName(name), dir)
 	if !ok {
 		return "fail", fmt.Sprintf("%s not found; override with %s", name, toolDefByName(name).Env)
@@ -932,14 +975,14 @@ func runExternalInDir(dir, name string, args ...string) (string, string) {
 	cmd := exec.Command(path, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
-	summary := summarizeOutput(out)
+	text := strings.TrimSpace(string(out))
 	if err != nil {
-		if summary == "" {
-			summary = err.Error()
+		if text == "" {
+			text = err.Error()
 		}
-		return "fail", summary
+		return "fail", text
 	}
-	return "pass", summary
+	return "pass", text
 }
 
 func summarizeOutput(out []byte) string {

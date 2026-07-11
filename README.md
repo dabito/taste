@@ -26,7 +26,7 @@ export PATH="$HOME/go/bin:$PATH"
 
 ```bash
 taste main.go
-taste main.go scripts/dev.sh --fix
+taste main.go scripts/dev.sh --autofix
 taste . --strict
 taste --changed --strict --json
 taste --flavors
@@ -36,7 +36,7 @@ taste --version
 ## Command shape
 
 ```text
-taste [targets...] [--fix|--dry] [--easy|--strict] [--json] [--max-issues N]
+taste [targets...] [--autofix|--dry] [--easy|--strict] [--json] [--max-issues N]
 ```
 
 Targets are files or directories. Multiple targets allowed. Use `--` before targets that begin with `-`. No targets defaults to `--changed` inside a git repo, otherwise `--project` with a warning.
@@ -44,7 +44,7 @@ Targets are files or directories. Multiple targets allowed. Use `--` before targ
 Flags:
 
 ```text
---fix             safe autofix only; does not diagnose (run again without --fix to check)
+--autofix         best-effort autofix; not everything is fixable (see below); does not diagnose (run again without --autofix to check)
 --dry             diagnostics only; default
 --easy            fast/local checks; default
 --strict          complete readiness checks
@@ -56,6 +56,16 @@ Flags:
 ```
 
 Go diagnostics use `gopls` when available. JS/TS diagnostics use `typescript-language-server` when available. Bash diagnostics use `bash-language-server` when available. Missing LSPs are warnings with install/override hints; shell/project checks still run.
+
+### `--autofix` is best-effort
+
+Not every diagnostic has a mechanical fix -- an unused variable, for example,
+needs a human decision, not a rewrite. `--autofix` only runs the tools a
+flavor actually has a fix step for (e.g. `gofmt -w`); it does not diagnose
+afterward to confirm nothing's left (that's a second, explicit call). If a
+flavor's diagnostic tools include one with no fix step, `--autofix` says so
+in `warnings`, naming the tool, so "only some of my issues got fixed" is
+never a silent surprise.
 
 ## Output
 
@@ -109,6 +119,23 @@ TASTE_GOPLS=/path/to/gopls
 TASTE_TYPESCRIPT_LANGUAGE_SERVER=/path/to/typescript-language-server
 TASTE_BASH_LANGUAGE_SERVER=/path/to/bash-language-server
 ```
+
+### Customizing flavors
+
+The go/javascript/bash flavors are defined in a TOML registry, built into the
+binary from [`flavors.default.toml`](flavors.default.toml). To customize a
+flavor (add a tool, change args, add a new language), copy that file and
+place it at one of these paths -- `taste` merges it whole-flavor-by-name over
+the built-in default:
+
+```bash
+cp flavors.default.toml .taste/flavors.toml          # project-local
+cp flavors.default.toml ~/.config/taste/flavors.toml # user-level
+```
+
+Edit the copy; you don't need to redefine every flavor, just the ones you're
+changing. See [`FLAVORS_PROPOSAL.md`](FLAVORS_PROPOSAL.md) for the full
+vocabulary (`tool`, `action`, `step`, `kind`).
 
 ## Development
 

@@ -12,7 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-//go:embed flavors.toml.default
+//go:embed flavors.default.toml
 var defaultFlavorsTOML string
 
 // flavorTool is one resolvable binary a flavor depends on: a plain argv
@@ -133,7 +133,7 @@ type flavorConfig struct {
 func loadFlavors() ([]flavorDef, error) {
 	base, err := parseFlavorTOML(defaultFlavorsTOML)
 	if err != nil {
-		return nil, fmt.Errorf("embedded flavors.toml.default is invalid: %w", err)
+		return nil, fmt.Errorf("embedded flavors.default.toml is invalid: %w", err)
 	}
 	byName := map[string]flavorDef{}
 	order := make([]string, 0, len(base))
@@ -237,7 +237,7 @@ func getFlavors() ([]flavorDef, string) {
 		if err != nil {
 			base, baseErr := parseFlavorTOML(defaultFlavorsTOML)
 			if baseErr != nil {
-				panic(fmt.Errorf("embedded flavors.toml.default is invalid: %w", baseErr))
+				panic(fmt.Errorf("embedded flavors.default.toml is invalid: %w", baseErr))
 			}
 			flavorsCached = base
 			flavorsWarning = err.Error()
@@ -262,6 +262,30 @@ func toolDefByName(name string) toolDef {
 		}
 	}
 	return toolDef{Name: name, Env: "TASTE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))}
+}
+
+// unfixableDiagnosticTools names the tools this flavor's "taste" action uses
+// to produce diagnostics but that have no corresponding step in the "fix"
+// action -- i.e. issues they report can never be resolved by --autofix alone
+// (e.g. a compiler/LSP diagnostic like an unused variable, as opposed to
+// gofmt's mechanical rewrite). Order follows the taste action's step order.
+func (f flavorDef) unfixableDiagnosticTools() []string {
+	fixTools := map[string]bool{}
+	for _, s := range f.Actions.Fix.Steps {
+		if s.Tool != "" {
+			fixTools[s.Tool] = true
+		}
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, s := range f.Actions.Taste.Steps {
+		if s.Tool == "" || fixTools[s.Tool] || seen[s.Tool] {
+			continue
+		}
+		seen[s.Tool] = true
+		names = append(names, s.Tool)
+	}
+	return names
 }
 
 // checksForFlavorNames flattens tool entries for the given flavor names

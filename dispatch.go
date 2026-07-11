@@ -169,19 +169,24 @@ func runFlavorArgvStep(res *result, fl flavorDef, root string, files []string, s
 	}
 
 	args := expandArgs(step.Args, files, "")
-	status, summary := runExternalInDir(dir, step.Tool, args...)
-	res.Commands = append(res.Commands, commandItem{Name: step.displayName(), Status: status, Summary: summary})
 
 	if step.Fixable && step.Kind == "argv" && !step.ListOutputAsIssues {
-		// A fix-action step (e.g. gofmt -w): success means files were
-		// reformatted; failure means the tool itself errored.
+		// A fix-action step (e.g. gofmt -l -w): the tool's own output lists
+		// which files it actually changed, so we report that count rather
+		// than assuming every file we handed it needed changing.
+		status, raw := runExternalInDirRaw(dir, step.Tool, args...)
+		summary := summarizeOutput([]byte(raw))
+		res.Commands = append(res.Commands, commandItem{Name: step.displayName(), Status: status, Summary: summary})
 		if status == "pass" {
-			res.Fixed = append(res.Fixed, fixedItem{Language: fl.Name, Kind: "format", Files: len(files)})
+			res.Fixed = append(res.Fixed, fixedItem{Language: fl.Name, Kind: "format", Files: len(nonEmptyLines(raw))})
 			return
 		}
 		res.Issues = append(res.Issues, issueItem{Language: fl.Name, Severity: "error", Code: step.displayName(), Message: summary})
 		return
 	}
+
+	status, summary := runExternalInDir(dir, step.Tool, args...)
+	res.Commands = append(res.Commands, commandItem{Name: step.displayName(), Status: status, Summary: summary})
 
 	if step.ListOutputAsIssues {
 		// e.g. gofmt -l: exit 0 with a list of unformatted files on stdout
@@ -199,6 +204,16 @@ func runFlavorArgvStep(res *result, fl flavorDef, root string, files []string, s
 	if status == "fail" {
 		res.Issues = append(res.Issues, issueItem{Language: fl.Name, Severity: "error", Code: step.displayName(), Message: summary})
 	}
+}
+
+func nonEmptyLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func expandArgs(template []string, files []string, file string) []string {
