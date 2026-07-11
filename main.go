@@ -16,8 +16,13 @@ import (
 
 const version = "0.1.0-beta.2"
 
-// schema_version bumps when result, issueItem, checkItem, commandItem, or flavorsResult JSON shape changes break old consumers; additive optional fields do not need a bump.
-const schemaVersion = 1
+// schema_version bumps when result, issueItem, checkItem, commandItem, or
+// flavorsResult JSON shape changes break old consumers, OR when a new value
+// is added to an existing enum-like field (e.g. status) that an old
+// consumer's exhaustive branching wouldn't recognize. Additive optional
+// fields do not need a bump. v2: added status="incomplete" and the
+// Incomplete field.
+const schemaVersion = 2
 
 const defaultMaxIssues = 200
 
@@ -61,19 +66,33 @@ type checkItem struct {
 	Install   string `json:"install,omitempty"`
 }
 
+// incompleteItem records a required diagnostic tool that failed to run
+// (missing, crashed, or timed out) for files actually in scope. This is
+// distinct from issueItem: an issue means the tool ran and found a real
+// problem; an incompleteItem means readiness could not be established at
+// all. Keeping them separate lets status distinguish "confirmed broken"
+// (fail) from "couldn't verify" (incomplete) instead of collapsing both
+// into the same signal.
+type incompleteItem struct {
+	Language string `json:"language"`
+	Tool     string `json:"tool"`
+	Reason   string `json:"reason"`
+}
+
 type result struct {
-	SchemaVersion int           `json:"schema_version"`
-	Status        string        `json:"status"`
-	Scope         string        `json:"scope"`
-	Summary       string        `json:"summary"`
-	Level         string        `json:"level"`
-	Header        string        `json:"header"`
-	Checks        []checkItem   `json:"checks"`
-	Fixed         []fixedItem   `json:"fixed"`
-	Issues        []issueItem   `json:"issues"`
-	TotalIssues   int           `json:"total_issues"`
-	Warnings      []warningItem `json:"warnings"`
-	Commands      []commandItem `json:"commands"`
+	SchemaVersion int              `json:"schema_version"`
+	Status        string           `json:"status"`
+	Scope         string           `json:"scope"`
+	Summary       string           `json:"summary"`
+	Level         string           `json:"level"`
+	Header        string           `json:"header"`
+	Checks        []checkItem      `json:"checks"`
+	Fixed         []fixedItem      `json:"fixed"`
+	Issues        []issueItem      `json:"issues"`
+	TotalIssues   int              `json:"total_issues"`
+	Warnings      []warningItem    `json:"warnings"`
+	Commands      []commandItem    `json:"commands"`
+	Incomplete    []incompleteItem `json:"incomplete"`
 }
 
 type flavorsResult struct {
@@ -214,7 +233,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if opts.ShowFlavors {
 		if err := printAvailability(stdout, runFlavors(), opts.JSONOut); err != nil {
 			fmt.Fprintln(stderr, err)
-			return 1
+			return 10
 		}
 		return 0
 	}
@@ -225,15 +244,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(res); err != nil {
 			fmt.Fprintln(stderr, err)
-			return 1
+			return 10
 		}
 	} else {
 		printHuman(stdout, res)
 	}
-	if res.Status == "fail" {
+	switch res.Status {
+	case "fail":
 		return 1
+	case "incomplete":
+		return 3
+	default:
+		return 0
 	}
-	return 0
 }
 
 func parseArgs(args []string, stdin io.Reader) (options, error) {
@@ -602,13 +625,18 @@ func finalize(res result, maxIssues int) result {
 	if len(res.Issues) > maxIssues {
 		res.Issues = res.Issues[:maxIssues]
 	}
-	if res.TotalIssues == 0 {
-		res.Status = "pass"
-		res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
+	if res.TotalIssues > 0 {
+		res.Status = "fail"
+		res.Summary = fmt.Sprintf("FAIL %d issues, %d warnings", res.TotalIssues, len(res.Warnings))
 		return res
 	}
-	res.Status = "fail"
-	res.Summary = fmt.Sprintf("FAIL %d issues, %d warnings", res.TotalIssues, len(res.Warnings))
+	if len(res.Incomplete) > 0 {
+		res.Status = "incomplete"
+		res.Summary = fmt.Sprintf("INCOMPLETE %d tool(s) unavailable, %d warnings", len(res.Incomplete), len(res.Warnings))
+		return res
+	}
+	res.Status = "pass"
+	res.Summary = fmt.Sprintf("PASS fixed: %s; remaining: 0", fixedSummary(res.Fixed))
 	return res
 }
 func ensureResultSlices(res result) result {
@@ -624,6 +652,9 @@ func ensureResultSlices(res result) result {
 	}
 	if res.Commands == nil {
 		res.Commands = []commandItem{}
+	}
+	if res.Incomplete == nil {
+		res.Incomplete = []incompleteItem{}
 	}
 	return res
 }
@@ -892,6 +923,15 @@ func isBashFile(p string) bool {
 	return ext == ".sh" || ext == ".bash" || ext == ".zsh"
 }
 
+// reportToolFailure records a required diagnostic tool that failed to run
+// (missing, crashed, or timed out) for files in scope. It marks the run
+// incomplete rather than appending an issue, so a missing tool is
+// distinguished from a confirmed real problem in the code.
+func reportToolFailure(res *result, language, tool string, err error) {
+	res.Warnings = append(res.Warnings, warningItem{Language: language, Message: err.Error()})
+	res.Incomplete = append(res.Incomplete, incompleteItem{Language: language, Tool: tool, Reason: err.Error()})
+}
+
 func runGo(res *result, files []string, format, diag bool, level string) {
 	if format {
 		if _, ok := resolveTool(toolDefByName("gofmt")); !ok {
@@ -913,8 +953,7 @@ func runGo(res *result, files []string, format, diag bool, level string) {
 	root := findWorkspaceRoot(files)
 	issues, summary, err := runGoplsDiagnostics(root, files)
 	if err != nil {
-		res.Warnings = append(res.Warnings, warningItem{Language: "go", Message: err.Error()})
-		res.Issues = append(res.Issues, issueItem{Language: "go", Severity: "error", Code: "gopls", Message: "required go diagnostic tool failed: " + err.Error()})
+		reportToolFailure(res, "go", "gopls", err)
 	} else {
 		status := "pass"
 		if len(issues) > 0 {
@@ -957,8 +996,7 @@ func runJS(res *result, files []string, format, diag bool, level string, allowSc
 	if diag {
 		issues, summary, err := runTypeScriptDiagnostics(root, files)
 		if err != nil {
-			res.Warnings = append(res.Warnings, warningItem{Language: "javascript", Message: err.Error()})
-			res.Issues = append(res.Issues, issueItem{Language: "javascript", Severity: "error", Code: "typescript-language-server", Message: "required javascript diagnostic tool failed: " + err.Error()})
+			reportToolFailure(res, "javascript", "typescript-language-server", err)
 		} else {
 			status := "pass"
 			if len(issues) > 0 {
@@ -1039,8 +1077,7 @@ func runBash(res *result, files []string, format, diag bool, level string) {
 	root := findWorkspaceRoot(files)
 	issues, summary, err := runBashLanguageDiagnostics(root, files)
 	if err != nil {
-		res.Warnings = append(res.Warnings, warningItem{Language: "bash", Message: err.Error()})
-		res.Issues = append(res.Issues, issueItem{Language: "bash", Severity: "error", Code: "bash-language-server", Message: "required bash diagnostic tool failed: " + err.Error()})
+		reportToolFailure(res, "bash", "bash-language-server", err)
 	} else {
 		status := "pass"
 		if len(issues) > 0 {

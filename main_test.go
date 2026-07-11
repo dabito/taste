@@ -92,7 +92,7 @@ func TestFlavorsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.SchemaVersion != 1 || payload.Status != "ok" || len(payload.Checks) == 0 {
+	if payload.SchemaVersion != schemaVersion || payload.Status != "ok" || len(payload.Checks) == 0 {
 		t.Fatalf("unexpected flavors payload: %#v", payload)
 	}
 }

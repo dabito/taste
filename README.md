@@ -75,13 +75,20 @@ taste --changed --strict --json
 With `--json`, stdout is exactly one JSON document. Human logs/errors go to stderr. Exit codes:
 
 ```text
-0  pass
-1  diagnostic issues found
-2  usage/config error
-3+ internal error
+0    pass
+1    fail: confirmed diagnostic issues
+2    usage/config error
+3    incomplete: a required diagnostic tool for files in scope couldn't run
+     (missing, crashed, or timed out) and no issues were otherwise found --
+     distinct from fail: this means readiness couldn't be verified, not
+     that a problem was confirmed
+4-9  reserved
+10+  internal error
 ```
 
-The JSON includes `schema_version`, `status`, `scope`, `level`, `summary`, `checks`, `fixed`, `issues`, `total_issues`, `warnings`, and `commands`. `--max-issues` caps `issues`; `total_issues` reports the pre-cap count.
+`status` mirrors this: `"pass" | "fail" | "incomplete"`. A run with both real issues and an unavailable tool is `fail` -- confirmed problems take priority over unverified ones.
+
+The JSON includes `schema_version`, `status`, `scope`, `level`, `summary`, `checks`, `fixed`, `issues`, `total_issues`, `warnings`, `commands`, and `incomplete`. `--max-issues` caps `issues`; `total_issues` reports the pre-cap count.
 
 ## Flavors
 

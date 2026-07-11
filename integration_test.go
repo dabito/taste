@@ -35,6 +35,34 @@ func TestTasteGoplsDiagnosticsFixture(t *testing.T) {
 	}
 }
 
+func TestTasteIncompleteWhenRequiredToolMissing(t *testing.T) {
+	t.Setenv("TASTE_GOPLS", "/nonexistent/gopls")
+	var out, errOut bytes.Buffer
+	code := run([]string{"testdata/good/go/clean/main.go", "--json"}, strings.NewReader(""), &out, &errOut)
+	if code != 3 {
+		t.Fatalf("expected incomplete exit code 3, code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
+	}
+	var payload result
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Status != "incomplete" {
+		t.Fatalf("expected status=incomplete: %#v", payload)
+	}
+	if len(payload.Issues) != 0 {
+		t.Fatalf("expected no confirmed issues, only an unavailable tool: %#v", payload.Issues)
+	}
+	found := false
+	for _, item := range payload.Incomplete {
+		if item.Tool == "gopls" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected gopls listed in incomplete: %#v", payload.Incomplete)
+	}
+}
+
 func TestTasteTypeScriptDiagnosticsFixture(t *testing.T) {
 	if _, ok := resolveTool(toolDefByName("typescript-language-server")); !ok {
 		t.Skip("typescript-language-server not installed")
