@@ -3,7 +3,31 @@
 Source: a multi-focal critique (correctness/robustness, security,
 testing/packaging, architecture/agent-contract) run against the codebase as
 of 2026-07. Findings are numbered for cross-reference from proposal docs
-(see `FLAVORS_PROPOSAL.md` for the P2 item in full detail).
+(see `FLAVORS_PROPOSAL.md` for the P2 item in full detail). Item text below
+is left as originally written (the finding, not a running log); status is
+tracked here instead of edited into each item.
+
+## Status
+
+- **P0 (1-4): done.** LSP deadline hit now errors into `incomplete` instead
+  of silently returning zero issues, and the wait is configurable
+  (`TASTE_LSP_TIMEOUT`, longer default for `--strict`). Missing/crashed
+  tools push status off a clean pass via `incomplete`. Git-state fallback
+  covers detached-HEAD/empty-repo. `--allow-scripts` gates npm script
+  execution.
+- **P1 CI (5-6): done.** `.github/workflows/ci.yml`, macOS+Ubuntu matrix,
+  real toolchains, fails the build on any skipped test.
+- **P1 schema reconciliation (10-13): done.**
+- **P2 flavor registry: done.** See `flavors.go`/`dispatch.go`/
+  `flavors.default.toml`.
+- **Item 7 (version-sensitive assertions): done.** Fixture assertions now
+  key on each tool's own stable structured code (gopls/go-types
+  diagnostic code, TS's numeric code) and only check message
+  non-emptiness, not exact prose wording.
+- **Item 8, item 9, the rest of P3: not started.** No Windows path/OS-aware
+  install hints, no ldflags-injected `version`, no subprocess-level e2e
+  smoke test. Lower-severity P0 security notes (silent env-override signal,
+  no path containment check) also still open.
 
 ## P0 — stop reporting false PASS
 

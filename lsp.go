@@ -58,53 +58,30 @@ type lspRunConfig struct {
 	IssueLanguage  string
 	LanguageIDFunc func(string) string
 	InitOptions    map[string]any
+	Timeout        time.Duration
 }
 
-func runGoplsDiagnostics(root string, files []string) ([]issueItem, string, error) {
-	return runLSPDiagnostics(lspRunConfig{
-		ToolName:      "gopls",
-		InstallHint:   "go install golang.org/x/tools/gopls@latest",
-		Root:          root,
-		Files:         files,
-		IssueLanguage: "go",
-		LanguageIDFunc: func(string) string {
-			return "go"
-		},
-	})
-}
+const (
+	defaultLSPTimeoutEasy   = 3 * time.Second
+	defaultLSPTimeoutStrict = 12 * time.Second
+)
 
-func runTypeScriptDiagnostics(root string, files []string) ([]issueItem, string, error) {
-	var initOptions map[string]any
-	// Gate the tsserver-path resolution (which can shell out to npm) behind
-	// the same existence check runLSPDiagnostics does for the LSP tool
-	// itself, so a missing typescript-language-server fails fast instead of
-	// paying for resolution work that will be discarded anyway.
-	if _, ok := resolveToolInDir(toolDefByName("typescript-language-server"), root); ok {
-		if tsserverPath, ok := resolveTsserverPath(root); ok {
-			initOptions = map[string]any{"tsserver": map[string]any{"path": tsserverPath}}
+// lspTimeoutForLevel picks how long to wait for publishDiagnostics to report
+// in for every requested file before treating the run as incomplete rather
+// than silently trusting whatever arrived. --strict gets a longer default
+// than --easy since it's meant to be a thorough, pre-completion check, not
+// a fast local one; TASTE_LSP_TIMEOUT (a Go duration string, e.g. "20s")
+// overrides either default for large workspaces or slow LSP servers.
+func lspTimeoutForLevel(level string) time.Duration {
+	if override := os.Getenv("TASTE_LSP_TIMEOUT"); override != "" {
+		if d, err := time.ParseDuration(override); err == nil && d > 0 {
+			return d
 		}
 	}
-	return runLSPDiagnostics(lspRunConfig{
-		ToolName:      "typescript-language-server",
-		ToolArgs:      []string{"--stdio"},
-		InitOptions:   initOptions,
-		InstallHint:   "npm install -D typescript-language-server typescript",
-		Root:          root,
-		Files:         files,
-		IssueLanguage: "javascript",
-		LanguageIDFunc: func(file string) string {
-			switch filepath.Ext(file) {
-			case ".ts", ".mts", ".cts":
-				return "typescript"
-			case ".tsx":
-				return "typescriptreact"
-			case ".jsx":
-				return "javascriptreact"
-			default:
-				return "javascript"
-			}
-		},
-	})
+	if level == "strict" {
+		return defaultLSPTimeoutStrict
+	}
+	return defaultLSPTimeoutEasy
 }
 
 // resolveTsserverPath finds a tsserver.js typescript-language-server can use,
@@ -148,19 +125,6 @@ func resolveTsserverPath(root string) (string, bool) {
 	return "", false
 }
 
-func runBashLanguageDiagnostics(root string, files []string) ([]issueItem, string, error) {
-	return runLSPDiagnostics(lspRunConfig{
-		ToolName:      "bash-language-server",
-		ToolArgs:      []string{"start"},
-		InstallHint:   "npm install -D bash-language-server",
-		Root:          root,
-		Files:         files,
-		IssueLanguage: "bash",
-		LanguageIDFunc: func(string) string {
-			return "shellscript"
-		},
-	})
-}
 func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 	absRoot, err := filepath.Abs(config.Root)
 	if err != nil {
@@ -252,8 +216,12 @@ func runLSPDiagnostics(config lspRunConfig) ([]issueItem, string, error) {
 		}
 	}
 
+	timeout := config.Timeout
+	if timeout <= 0 {
+		timeout = defaultLSPTimeoutEasy
+	}
 	diagByURI := map[string][]lspDiagnostic{}
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(timeout)
 	timedOut := false
 waitLoop:
 	for len(diagByURI) < len(wanted) {

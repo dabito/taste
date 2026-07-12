@@ -28,10 +28,16 @@ func TestTasteGoplsDiagnosticsFixture(t *testing.T) {
 	if !hasCommand(payload.Commands, "gopls", "fail") {
 		t.Fatalf("missing failing gopls command: %#v", payload.Commands)
 	}
-	if !hasIssue(payload.Issues, "testdata/bad/go/type-error/main.go", "compiler:IncompatibleAssign", "cannot use 1") {
+	// Assert on Code, gopls/go-types' own stable structured diagnostic
+	// identifier, not on the compiler's prose wording -- that wording isn't
+	// part of any stability contract and a future Go release rephrasing it
+	// shouldn't fail this test. Message is checked only for non-emptiness.
+	assign, ok := findIssue(payload.Issues, "testdata/bad/go/type-error/main.go", "compiler:IncompatibleAssign")
+	if !ok || assign.Message == "" {
 		t.Fatalf("missing incompatible assign diagnostic: %#v", payload.Issues)
 	}
-	if !hasIssue(payload.Issues, "testdata/bad/go/type-error/main.go", "compiler:UnusedVar", "declared and not used") {
+	unused, ok := findIssue(payload.Issues, "testdata/bad/go/type-error/main.go", "compiler:UnusedVar")
+	if !ok || unused.Message == "" {
 		t.Fatalf("missing unused var diagnostic: %#v", payload.Issues)
 	}
 }
@@ -101,7 +107,11 @@ func TestTasteTypeScriptDiagnosticsFixture(t *testing.T) {
 	if !hasCommand(payload.Commands, "typescript-language-server", "fail") {
 		t.Fatalf("missing failing typescript-language-server command: %#v", payload.Commands)
 	}
-	if !hasIssueCodeContains(payload.Issues, "testdata/bad/js/type-error/main.ts", "2322", "not assignable") {
+	// 2322 is TypeScript's own stable numeric diagnostic code; the message
+	// wording ("not assignable") isn't part of any stability contract, so
+	// only check it's non-empty, not its exact phrasing.
+	assignability, ok := findIssueCodeContains(payload.Issues, "testdata/bad/js/type-error/main.ts", "2322")
+	if !ok || assignability.Message == "" {
 		t.Fatalf("missing TypeScript assignability diagnostic: %#v", payload.Issues)
 	}
 }
@@ -122,7 +132,11 @@ func TestTasteBashSyntaxFixture(t *testing.T) {
 	if !hasCommand(payload.Commands, "bash -n testdata/bad/bash/syntax-error/script.sh", "fail") {
 		t.Fatalf("missing failing bash -n command: %#v", payload.Commands)
 	}
-	if !hasIssue(payload.Issues, "testdata/bad/bash/syntax-error/script.sh", "bash -n", "syntax error") {
+	// "bash -n" here is our own step name (Code), not a bash diagnostic
+	// code -- bash has no structured error codes, only prose. Check the
+	// message is non-empty rather than pinning to bash's exact wording.
+	syntaxErr, ok := findIssue(payload.Issues, "testdata/bad/bash/syntax-error/script.sh", "bash -n")
+	if !ok || syntaxErr.Message == "" {
 		t.Fatalf("missing bash syntax diagnostic: %#v", payload.Issues)
 	}
 }
@@ -221,11 +235,23 @@ func hasIssue(issues []issueItem, file, code, message string) bool {
 	return false
 }
 
-func hasIssueCodeContains(issues []issueItem, file, codePart, message string) bool {
+// findIssue and findIssueCodeContains return the matched issue (not just a
+// bool) so callers can assert on its Message separately from finding it --
+// see the comment at their call sites for why that split matters.
+func findIssue(issues []issueItem, file, code string) (issueItem, bool) {
 	for _, issue := range issues {
-		if issue.File == file && strings.Contains(issue.Code, codePart) && strings.Contains(issue.Message, message) {
-			return true
+		if issue.File == file && issue.Code == code {
+			return issue, true
 		}
 	}
-	return false
+	return issueItem{}, false
+}
+
+func findIssueCodeContains(issues []issueItem, file, codePart string) (issueItem, bool) {
+	for _, issue := range issues {
+		if issue.File == file && strings.Contains(issue.Code, codePart) {
+			return issue, true
+		}
+	}
+	return issueItem{}, false
 }

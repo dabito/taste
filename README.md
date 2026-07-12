@@ -120,6 +120,18 @@ TASTE_TYPESCRIPT_LANGUAGE_SERVER=/path/to/typescript-language-server
 TASTE_BASH_LANGUAGE_SERVER=/path/to/bash-language-server
 ```
 
+### LSP diagnostics timeout
+
+`taste` waits for every requested file's `publishDiagnostics` to report in
+before trusting the result; hitting the deadline early is treated as
+`incomplete`, not a silent clean pass. Default wait: 3s for `--easy`, 12s
+for `--strict` (a thorough, pre-completion check can afford to wait
+longer). Override either with a Go duration string:
+
+```bash
+TASTE_LSP_TIMEOUT=20s taste --strict --json
+```
+
 ### Customizing flavors
 
 The go/javascript/bash flavors are defined in a TOML registry, built into the

@@ -107,6 +107,7 @@ func runFlavorLSPStep(res *result, fl flavorDef, root string, files []string, st
 		IssueLanguage:  tool.IssueLanguage,
 		LanguageIDFunc: tool.languageIDFor,
 		InitOptions:    initOptions,
+		Timeout:        lspTimeoutForLevel(res.Level),
 	})
 	if err != nil {
 		reportToolFailure(res, fl.Name, tool.Name, err)

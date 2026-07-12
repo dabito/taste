@@ -4,7 +4,38 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestLSPTimeoutForLevel(t *testing.T) {
+	if got := lspTimeoutForLevel("easy"); got != defaultLSPTimeoutEasy {
+		t.Fatalf("easy default = %v, want %v", got, defaultLSPTimeoutEasy)
+	}
+	if got := lspTimeoutForLevel("strict"); got != defaultLSPTimeoutStrict {
+		t.Fatalf("strict default = %v, want %v", got, defaultLSPTimeoutStrict)
+	}
+	if defaultLSPTimeoutStrict <= defaultLSPTimeoutEasy {
+		t.Fatalf("strict default (%v) should be longer than easy default (%v)", defaultLSPTimeoutStrict, defaultLSPTimeoutEasy)
+	}
+
+	t.Setenv("TASTE_LSP_TIMEOUT", "20s")
+	if got := lspTimeoutForLevel("easy"); got != 20*time.Second {
+		t.Fatalf("TASTE_LSP_TIMEOUT override = %v, want 20s", got)
+	}
+	if got := lspTimeoutForLevel("strict"); got != 20*time.Second {
+		t.Fatalf("TASTE_LSP_TIMEOUT override should apply to strict too, got %v", got)
+	}
+
+	t.Setenv("TASTE_LSP_TIMEOUT", "not-a-duration")
+	if got := lspTimeoutForLevel("easy"); got != defaultLSPTimeoutEasy {
+		t.Fatalf("malformed TASTE_LSP_TIMEOUT should fall back to default, got %v", got)
+	}
+
+	t.Setenv("TASTE_LSP_TIMEOUT", "-5s")
+	if got := lspTimeoutForLevel("strict"); got != defaultLSPTimeoutStrict {
+		t.Fatalf("non-positive TASTE_LSP_TIMEOUT should fall back to default, got %v", got)
+	}
+}
 
 // TestFindWorkspaceRootFallsBackToFileDirNotCallerCwd guards against a real
 // bug: a lone ad-hoc file with no go.mod/package.json/tsconfig.json/.git
