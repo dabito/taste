@@ -29,10 +29,11 @@ tracked here instead of edited into each item.
   gap), no ldflags-injected `version`, no subprocess-level e2e smoke test.
   Lower-severity P0 security notes (silent env-override signal, no path
   containment check) also still open.
-- **P4 (`taste-mcp`): not started.** New addition -- a standalone MCP
-  server so non-Pi MCP clients (Claude Desktop, Claude Code, Cursor) can
-  use taste, sharing a transport-agnostic core extracted out of
-  `pi-taste`.
+- **P4 (`taste-mcp`): scoped, not started.** Full design in `pi-taste`'s
+  `TASTE_MCP_PROPOSAL.md` -- an npm workspace (`@taste/core` +
+  `pi-taste` + `taste-mcp`), one `SURFACE_CONTRACT.md`, Zod schemas for
+  the MCP side, and a rollout order that adds the first real unit tests
+  this logic has ever had.
 
 ## P0 — stop reporting false PASS
 
@@ -195,31 +196,22 @@ Pi. Standing up a standard MCP server (stdio transport, `@modelcontextprotocol/s
 would let any MCP-compatible client (Claude Desktop, Claude Code, Cursor,
 etc.) use taste, not just Pi agents.
 
-Shape of the work:
+Full design, package layout, and rollout order:
+`pi-taste`'s `TASTE_MCP_PROPOSAL.md`.
 
-16. **Extract the transport-agnostic core out of `pi-taste`** into a shared
-    module (arg-building, subprocess invocation, result normalization,
-    schema types) that neither `pi.registerTool` nor an MCP `server.tool()`
-    registration needs to know about. Both wrappers become thin adapters
-    over the same core, so a schema/behavior change (like the
-    `--fix`→`--autofix` rename) only has one place to land instead of two
-    wrappers drifting.
+16. **Extract the transport-agnostic core out of `pi-taste`** into an npm
+    workspace package (`@taste/core`, unpublished): types, arg-building,
+    result normalization, an `Executor` interface each wrapper implements
+    for its own subprocess mechanism. Both `pi-taste` and `taste-mcp`
+    become thin adapters over it, so a schema/behavior change (like the
+    `--fix`→`--autofix` rename) only has one place to land. Also the first
+    real unit tests for this logic — `pi-taste` currently has none.
 
-17. **New `taste-mcp` package** registering the same tool surface
-    (targets/changed/project/autofix/strict/timeout_ms/max_issues) via the
-    MCP SDK instead of Pi's extension API, stdio transport, distributed so
-    it's runnable via `npx taste-mcp` without a global install.
-
-Open questions, not yet decided:
-
-- Same repo as `pi-taste` (a second package/workspace) or a new repo? A
-  shared core module argues for one repo with two thin wrapper packages,
-  but `pi-taste`'s `package.json` currently assumes it *is* the Pi
-  extension (`"pi": {"extensions": [...]}`), so this isn't a trivial
-  workspace split.
-- Does `taste-mcp` need its own `SURFACE_CONTRACT.md`, or does it just
-  point at `pi-taste`'s (since the underlying `taste` JSON contract is
-  identical regardless of transport)?
+17. **New `taste-mcp` package** in the same workspace, registering the
+    same tool surface (targets/changed/project/autofix/strict/timeout_ms/
+    max_issues) via the MCP SDK (Zod schemas, stdio transport) instead of
+    Pi's extension API/typebox, built to `dist/` and runnable via
+    `npx taste-mcp`.
 
 ## Sequencing rationale
 
