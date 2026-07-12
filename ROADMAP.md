@@ -28,6 +28,10 @@ tracked here instead of edited into each item.
   install hints, no ldflags-injected `version`, no subprocess-level e2e
   smoke test. Lower-severity P0 security notes (silent env-override signal,
   no path containment check) also still open.
+- **P4 (`taste-mcp`): not started.** New addition -- a standalone MCP
+  server so non-Pi MCP clients (Claude Desktop, Claude Code, Cursor) can
+  use taste, sharing a transport-agnostic core extracted out of
+  `pi-taste`.
 
 ## P0 — stop reporting false PASS
 
@@ -178,6 +182,43 @@ Also closes:
   exit codes 0/1/2 as seen externally, not just via the in-process `run()`
   call the current tests use.
 
+## P4 — taste-mcp: a standalone MCP server
+
+`pi-taste` only reaches Pi agents (`pi.registerTool`, the
+`@earendil-works/pi-coding-agent` extension API). Most of the value isn't
+Pi-specific: `buildTasteArgs`, `runTaste`, `normalizeTasteResult`, and the
+schema/next-action text in `src/index.ts` are just "shell out to the
+`taste` binary and shape the result" — nothing in that logic depends on
+Pi. Standing up a standard MCP server (stdio transport, `@modelcontextprotocol/sdk`)
+would let any MCP-compatible client (Claude Desktop, Claude Code, Cursor,
+etc.) use taste, not just Pi agents.
+
+Shape of the work:
+
+16. **Extract the transport-agnostic core out of `pi-taste`** into a shared
+    module (arg-building, subprocess invocation, result normalization,
+    schema types) that neither `pi.registerTool` nor an MCP `server.tool()`
+    registration needs to know about. Both wrappers become thin adapters
+    over the same core, so a schema/behavior change (like the
+    `--fix`→`--autofix` rename) only has one place to land instead of two
+    wrappers drifting.
+
+17. **New `taste-mcp` package** registering the same tool surface
+    (targets/changed/project/autofix/strict/timeout_ms/max_issues) via the
+    MCP SDK instead of Pi's extension API, stdio transport, distributed so
+    it's runnable via `npx taste-mcp` without a global install.
+
+Open questions, not yet decided:
+
+- Same repo as `pi-taste` (a second package/workspace) or a new repo? A
+  shared core module argues for one repo with two thin wrapper packages,
+  but `pi-taste`'s `package.json` currently assumes it *is* the Pi
+  extension (`"pi": {"extensions": [...]}`), so this isn't a trivial
+  workspace split.
+- Does `taste-mcp` need its own `SURFACE_CONTRACT.md`, or does it just
+  point at `pi-taste`'s (since the underlying `taste` JSON contract is
+  identical regardless of transport)?
+
 ## Sequencing rationale
 
 P0 items ship before anything else touches this code, since they're either
@@ -188,4 +229,8 @@ registry) is verified on a clean machine instead of trusting local state —
 the same failure mode the critique's testing/packaging findings describe.
 Schema reconciliation before or alongside P2 avoids building the new
 data-driven dispatcher against a `commands`/`checks` shape that's about to
-be unified. P3 has no urgency; it's cleanup once the above lands.
+be unified. P3 has no urgency; it's cleanup once the above lands. P4
+(`taste-mcp`) is a new distribution surface, not a fix -- it can start
+whenever, but extracting the shared core (item 16) is worth doing before
+`pi-taste` accumulates more Pi-specific logic tangled into it, since that
+tangling is exactly what makes the extraction harder later.
