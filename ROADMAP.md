@@ -24,10 +24,11 @@ tracked here instead of edited into each item.
   key on each tool's own stable structured code (gopls/go-types
   diagnostic code, TS's numeric code) and only check message
   non-emptiness, not exact prose wording.
-- **Item 8, item 9, the rest of P3: not started.** No Windows path/OS-aware
-  install hints, no ldflags-injected `version`, no subprocess-level e2e
-  smoke test. Lower-severity P0 security notes (silent env-override signal,
-  no path containment check) also still open.
+- **Item 8, item 9, the rest of P3: not started.** Install hints still
+  assume Homebrew even on Linux (Windows explicitly out of scope, not a
+  gap), no ldflags-injected `version`, no subprocess-level e2e smoke test.
+  Lower-severity P0 security notes (silent env-override signal, no path
+  containment check) also still open.
 - **P4 (`taste-mcp`): not started.** New addition -- a standalone MCP
   server so non-Pi MCP clients (Claude Desktop, Claude Code, Cursor) can
   use taste, sharing a transport-agnostic core extracted out of
@@ -103,9 +104,10 @@ tree (`main.go:680-736`).
    against real gopls/tsc output) — a future tool release reformatting
    diagnostics breaks these tests silently and machine-dependently.
 
-8. **Platform gaps**: `bash -n` and `shellcheck`/`shfmt` assume a
-   Unix-like environment with Homebrew (`main.go:373, 377-378, 989`) — no
-   Windows path, no OS-aware install hints.
+8. **Install hints assume Homebrew** (`main.go:373, 377-378, 989`) — a
+   Linux user without Homebrew gets a `brew install shellcheck` hint that
+   doesn't apply to them. Windows is explicitly out of scope; this is
+   about macOS vs. Linux install hints, not a Windows port.
 
 9. No end-to-end subprocess smoke test (everything calls `run()` in-process
    — nothing exercises the actual compiled binary, its exit codes as seen
@@ -175,8 +177,8 @@ Also closes:
 
 ## P3 — polish
 
-- OS-aware install hints (drop the `brew install` assumption for Linux/
-  Windows users).
+- Linux-aware install hints (drop the `brew install` assumption when not
+  on macOS). Windows is explicitly out of scope.
 - `version` wired to ldflags from git tags instead of a hand-edited const.
 - A subprocess-level e2e smoke test covering `--json`/human output and
   exit codes 0/1/2 as seen externally, not just via the in-process `run()`
