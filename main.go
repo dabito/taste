@@ -14,7 +14,9 @@ import (
 	"strings"
 )
 
-const version = "0.1.0-beta.2"
+// var, not const: overwritten at build time via -ldflags "-X main.version=...".
+// This fallback only shows up in a go run/go build with no ldflags.
+var version = "0.1.0-beta.2"
 
 // schema_version bumps when result, issueItem, checkItem, commandItem, or
 // flavorsResult JSON shape changes break old consumers, OR when a new value

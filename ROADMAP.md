@@ -24,11 +24,18 @@ tracked here instead of edited into each item.
   key on each tool's own stable structured code (gopls/go-types
   diagnostic code, TS's numeric code) and only check message
   non-emptiness, not exact prose wording.
-- **Item 8, item 9, the rest of P3: not started.** Install hints still
-  assume Homebrew even on Linux (Windows explicitly out of scope, not a
-  gap), no ldflags-injected `version`, no subprocess-level e2e smoke test.
-  Lower-severity P0 security notes (silent env-override signal, no path
-  containment check) also still open.
+- **Item 8: done.** Install hints moved into `flavors.default.toml` as plain,
+  OS-neutral strings (`"install shellcheck"`, `"install shfmt"`, etc.) as a
+  side effect of the P2 registry work -- no Homebrew assumption left
+  anywhere (Windows explicitly out of scope, not a gap).
+- **`version` ldflags: done.** `main.go`'s `version` is now a `var`,
+  overwritten at build time via `-ldflags "-X main.version=..."`; `make
+  install`/`make build` inject it from `git describe --tags --always
+  --dirty`, so the binary's `--version` always matches what it was actually
+  built from.
+- **Item 9, the rest of P3: not started.** No subprocess-level e2e smoke
+  test. Lower-severity P0 security notes (silent env-override signal, no
+  path containment check) also still open.
 - **P4 (`taste-mcp`): scoped, not started.** Full design in `pi-taste`'s
   `TASTE_MCP_PROPOSAL.md` -- an npm workspace (`@taste/core` +
   `pi-taste` + `taste-mcp`), one `SURFACE_CONTRACT.md`, Zod schemas for
@@ -178,9 +185,10 @@ Also closes:
 
 ## P3 — polish
 
-- Linux-aware install hints (drop the `brew install` assumption when not
-  on macOS). Windows is explicitly out of scope.
-- `version` wired to ldflags from git tags instead of a hand-edited const.
+- ~~Linux-aware install hints (drop the `brew install` assumption when not
+  on macOS).~~ Done -- see Status. Windows is explicitly out of scope.
+- ~~`version` wired to ldflags from git tags instead of a hand-edited
+  const.~~ Done -- see Status.
 - A subprocess-level e2e smoke test covering `--json`/human output and
   exit codes 0/1/2 as seen externally, not just via the in-process `run()`
   call the current tests use.
