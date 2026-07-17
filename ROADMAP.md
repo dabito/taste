@@ -36,11 +36,19 @@ tracked here instead of edited into each item.
 - **Item 9, the rest of P3: not started.** No subprocess-level e2e smoke
   test. Lower-severity P0 security notes (silent env-override signal, no
   path containment check) also still open.
-- **P4 (`taste-mcp`): scoped, not started.** Full design in `pi-taste`'s
-  `TASTE_MCP_PROPOSAL.md` -- an npm workspace (`@taste/core` +
-  `pi-taste` + `taste-mcp`), one `SURFACE_CONTRACT.md`, Zod schemas for
-  the MCP side, and a rollout order that adds the first real unit tests
-  this logic has ever had.
+- **P4 (`taste-mcp`): in progress, repo topology revised.** Full design in
+  `pi-taste`'s `TASTE_MCP_PROPOSAL.md`. The proposal's original single-repo
+  npm workspace was built and verified working, then split into four
+  repos once it became clear `pi-taste` (Pi agent users) and `taste-mcp`
+  (MCP/Claude Desktop users) are genuinely separate audiences that
+  deserve independent repo identities: `taste`, `taste-client` (the
+  shared TS contract client, was `@taste/core`), `pi-taste`, `taste-mcp`.
+  Rollout steps 1-3 done across the split repos (extraction, first real
+  unit tests -- 38, previously zero -- `taste-mcp` built and verified with
+  a real MCP client round-trip). Remaining: publish `taste-client` to npm
+  and swap the `file:`-path dependencies in `pi-taste`/`taste-mcp` to real
+  semver ranges, the permanent MCP stdio smoke test (step 4), and
+  install/config docs (step 5).
 
 ## P0 — stop reporting false PASS
 
